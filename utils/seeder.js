@@ -5,6 +5,7 @@ import StakingRound from '../models/stakingRound.model.js';
 import Plan from '../models/plan.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
+import { initialAssetsList } from './initialAssets.js';
 
 export const seedDatabase = async () => {
   try {
@@ -327,152 +328,17 @@ export const seedDatabase = async () => {
       }
     }
 
-    // 7. Seed Stock & Crypto Game Assets if empty
+    // 7. Seed Stock & Crypto Game Assets (50+ Stocks & Assets)
     const assetCount = await Asset.countDocuments();
-    if (assetCount === 0) {
-      await Asset.create([
-        {
-          id: 'BTC/USDT',
-          name: 'Bitcoin',
-          symbol: 'BTC',
-          category: 'Crypto',
-          basePrice: 5524321,
-          step: 240,
-          icon: '₿',
-          color: '#f7931a',
-          returnPercent: 30, // 30% interest
-          minStake: 500,
-          maxStake: 1000000,
-          description: 'Global benchmark cryptocurrency',
-        },
-        {
-          id: 'ETH/USDT',
-          name: 'Ethereum',
-          symbol: 'ETH',
-          category: 'Crypto',
-          basePrice: 248762,
-          step: 28,
-          icon: 'Ξ',
-          color: '#627eea',
-          returnPercent: 28, // 28% interest
-          minStake: 500,
-          maxStake: 500000,
-          description: 'Smart contracts platform',
-        },
-        {
-          id: 'SOL/USDT',
-          name: 'Solana',
-          symbol: 'SOL',
-          category: 'Crypto',
-          basePrice: 12450,
-          step: 4.5,
-          icon: '◎',
-          color: '#9945ff',
-          returnPercent: 35, // 35% interest
-          minStake: 200,
-          maxStake: 250000,
-          description: 'High-speed layer 1 blockchain',
-        },
-        {
-          id: 'BNB/USDT',
-          name: 'Binance Coin',
-          symbol: 'BNB',
-          category: 'Crypto',
-          basePrice: 37820,
-          step: 6.2,
-          icon: '🔶',
-          color: '#f3ba2f',
-          returnPercent: 25, // 25% interest
-          minStake: 200,
-          maxStake: 300000,
-          description: 'BNB Chain primary asset',
-        },
-        {
-          id: 'TATAMOTORS/INR',
-          name: 'Tata Motors Ltd',
-          symbol: 'TATAMOTORS',
-          category: 'Stock',
-          basePrice: 980.5,
-          step: 1.5,
-          icon: '🏎️',
-          color: '#38bdf8',
-          returnPercent: 40, // 40% interest
-          minStake: 100,
-          maxStake: 200000,
-          description: 'Automobile leader & EV market champion',
-        },
-        {
-          id: 'RELIANCE/INR',
-          name: 'Reliance Industries',
-          symbol: 'RELIANCE',
-          category: 'Stock',
-          basePrice: 2950.0,
-          step: 3.5,
-          icon: '🏢',
-          color: '#10b981',
-          returnPercent: 22, // 22% interest
-          minStake: 100,
-          maxStake: 500000,
-          description: 'Energy, petrochemicals & retail giant',
-        },
-        {
-          id: 'HDFCBANK/INR',
-          name: 'HDFC Bank Ltd',
-          symbol: 'HDFCBANK',
-          category: 'Stock',
-          basePrice: 1650.0,
-          step: 2.0,
-          icon: '🏦',
-          color: '#3b82f6',
-          returnPercent: 20, // 20% interest
-          minStake: 100,
-          maxStake: 500000,
-          description: "India's premier private banking institution",
-        },
-        {
-          id: 'AAPL/INR',
-          name: 'Apple Inc',
-          symbol: 'AAPL',
-          category: 'Stock',
-          basePrice: 19400.0,
-          step: 15.0,
-          icon: '🍎',
-          color: '#a855f7',
-          returnPercent: 32, // 32% interest
-          minStake: 500,
-          maxStake: 1000000,
-          description: 'Consumer technology & iPhone manufacturer',
-        },
-        {
-          id: 'TSLA/INR',
-          name: 'Tesla Motors',
-          symbol: 'TSLA',
-          category: 'Stock',
-          basePrice: 21500.0,
-          step: 25.0,
-          icon: '⚡',
-          color: '#ef4444',
-          returnPercent: 45, // 45% interest
-          minStake: 500,
-          maxStake: 1000000,
-          description: 'Clean energy & autonomous electric vehicles',
-        },
-        {
-          id: 'GOLD/INR',
-          name: 'Gold 24K Pure',
-          symbol: 'GOLD',
-          category: 'Commodity',
-          basePrice: 7850.0,
-          step: 5.0,
-          icon: '🥇',
-          color: '#eab308',
-          returnPercent: 18, // 18% interest
-          minStake: 200,
-          maxStake: 500000,
-          description: 'Sovereign hedge precious metal',
-        },
-      ]);
-      console.log('✅ Seeded initial Stock & Crypto game assets with interest rates');
+    if (assetCount < 40) {
+      for (const item of initialAssetsList) {
+        await Asset.findOneAndUpdate(
+          { $or: [{ id: item.id }, { symbol: item.symbol }] },
+          { $set: item },
+          { upsert: true, returnDocument: 'after' }
+        );
+      }
+      console.log(`✅ Seeded and synchronized ${initialAssetsList.length} Stock & Crypto game assets with interest rates`);
     }
   } catch (error) {
     console.error('Seeding error:', error.message);
