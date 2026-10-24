@@ -101,6 +101,9 @@ export const createAsset = async (req, res) => {
       minStake: Number(minStake) || 100,
       maxStake: Number(maxStake) || 500000,
       isEnabled: isEnabled !== undefined ? isEnabled : true,
+      upiId: (req.body.upiId || '').trim(),
+      qrCode: req.body.qrCode || '',
+      payeeName: (req.body.payeeName || '').trim(),
       description: description || '',
     });
 
@@ -139,6 +142,9 @@ export const updateAsset = async (req, res) => {
     if (updates.minStake !== undefined) asset.minStake = Number(updates.minStake);
     if (updates.maxStake !== undefined) asset.maxStake = Number(updates.maxStake);
     if (updates.isEnabled !== undefined) asset.isEnabled = Boolean(updates.isEnabled);
+    if (updates.upiId !== undefined) asset.upiId = updates.upiId.trim();
+    if (updates.qrCode !== undefined) asset.qrCode = updates.qrCode;
+    if (updates.payeeName !== undefined) asset.payeeName = updates.payeeName.trim();
     if (updates.description !== undefined) asset.description = updates.description;
 
     await asset.save();

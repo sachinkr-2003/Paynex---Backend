@@ -35,7 +35,7 @@ export const getWalletHistory = async (req, res) => {
 // @route   POST /api/wallet/deposit
 export const submitDeposit = async (req, res) => {
   try {
-    const { amount, utr, method, screenshotProof } = req.body;
+    const { amount, utr, method, screenshotProof, companyId, companyName, companyUpi } = req.body;
     const userId = req.user.id;
 
     if (!amount || !utr) {
@@ -64,6 +64,9 @@ export const submitDeposit = async (req, res) => {
       method: method || 'UPI',
       utr: utr.trim(),
       screenshotProof: screenshotProof || 'paynex_receipt_verified.png',
+      companyId: companyId || '',
+      companyName: companyName || '',
+      companyUpi: companyUpi || '',
       status: 'Pending',
     });
 

@@ -60,6 +60,20 @@ const assetSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    upiId: {
+      type: String,
+      default: '',
+      trim: true,
+    },
+    qrCode: {
+      type: String,
+      default: '', // Base64 data URI or image URL for custom company QR code
+    },
+    payeeName: {
+      type: String,
+      default: '',
+      trim: true,
+    },
     description: {
       type: String,
       default: '',

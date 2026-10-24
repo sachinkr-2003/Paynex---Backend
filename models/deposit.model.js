@@ -40,6 +40,18 @@ const depositSchema = new mongoose.Schema(
       type: String,
       default: 'paynex_receipt_verified.png',
     },
+    companyId: {
+      type: String,
+      default: '',
+    },
+    companyName: {
+      type: String,
+      default: '',
+    },
+    companyUpi: {
+      type: String,
+      default: '',
+    },
     status: {
       type: String,
       enum: ['Pending', 'Approved', 'Rejected'],
