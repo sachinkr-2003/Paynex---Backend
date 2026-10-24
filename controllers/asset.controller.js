@@ -125,7 +125,7 @@ export const updateAsset = async (req, res) => {
     const updates = req.body;
 
     const asset = await Asset.findOne({
-      $or: [{ id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }],
+      $or: [{ id }, { symbol: id.toUpperCase() }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }],
     });
 
     if (!asset) {
@@ -166,7 +166,7 @@ export const deleteAsset = async (req, res) => {
     const { id } = req.params;
 
     const asset = await Asset.findOneAndDelete({
-      $or: [{ id }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }],
+      $or: [{ id }, { symbol: id.toUpperCase() }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }],
     });
 
     if (!asset) {

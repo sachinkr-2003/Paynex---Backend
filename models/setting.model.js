@@ -9,15 +9,15 @@ const settingSchema = new mongoose.Schema(
     },
     platformName: {
       type: String,
-      default: 'PAYNEX CRYPTO',
+      default: 'Paynex',
     },
     officialUpiId: {
       type: String,
-      default: 'paynex.crypto@icici',
+      default: 'paynex@icici',
     },
     merchantName: {
       type: String,
-      default: 'Paynex Crypto Technologies Pvt Ltd',
+      default: 'Paynex Technologies Pvt Ltd',
     },
     minDeposit: {
       type: Number,

@@ -56,7 +56,7 @@ app.use('/api/assets', assetRoutes);
 app.get('/', (req, res) => {
   res.json({
     status: 'ONLINE',
-    platform: 'PAYNEX CRYPTO API Server',
+    platform: 'Paynex API Server',
     version: '1.0.0',
     time: new Date().toISOString(),
   });

@@ -19,4 +19,9 @@ router.post('/admin/create', protect, adminOnly, createAsset);
 router.put('/admin/:id', protect, adminOnly, updateAsset);
 router.delete('/admin/:id', protect, adminOnly, deleteAsset);
 
+// Standard REST aliases
+router.post('/', protect, adminOnly, createAsset);
+router.put('/:id', protect, adminOnly, updateAsset);
+router.delete('/:id', protect, adminOnly, deleteAsset);
+
 export default router;
