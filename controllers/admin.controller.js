@@ -35,7 +35,7 @@ export const getDashboardKPIs = async (req, res) => {
 
     const allStakes = await StakingRound.find();
     const totalStakeVol = allStakes.reduce((sum, r) => sum + (r.stakedAmount || 0), 0);
-    const totalUserInvested = Math.max(totalDepositsApproved, totalStakeVol, 1485000);
+    const totalUserInvested = totalDepositsApproved + totalStakeVol;
 
     // Total money given to users (Outflow: approved/completed withdrawals + won payouts)
     const allApprovedWithdrawals = await Withdrawal.find({ status: { $in: ['Approved', 'Completed'] } });
@@ -43,12 +43,12 @@ export const getDashboardKPIs = async (req, res) => {
     const totalWonPayouts = allStakes
       .filter((r) => r.status === 'Won' || r.status === 'Completed')
       .reduce((sum, r) => sum + (r.payout || 0), 0);
-    const totalPaidOut = Math.max(totalWithdrawalsPaid, totalWonPayouts, 642000);
+    const totalPaidOut = totalWithdrawalsPaid + totalWonPayouts;
 
     // Net platform profit / balance
     const netPlatformProfit = totalUserInvested - totalPaidOut;
 
-    const totalPlatformVolume = Math.max(48250000, totalDepositsApproved + totalStakeVol);
+    const totalPlatformVolume = totalUserInvested;
 
     const settings = await Setting.findOne({ key: 'main_config' });
 
@@ -59,14 +59,14 @@ export const getDashboardKPIs = async (req, res) => {
         totalUserInvested,
         totalPaidOut,
         netPlatformProfit,
-        liveStakingPool: Math.max(liveStakingPool, 1998100),
+        liveStakingPool,
         totalTraders,
-        activeTradersNow: Math.min(totalTraders, 342),
-        depositsToday: depositsToday || 845000,
+        activeTradersNow: totalTraders > 0 ? 1 : 0,
+        depositsToday,
         pendingWithdrawalsCount: pendingWithdrawals.length,
         pendingWithdrawalsAmount,
         adminProfitPercent: settings?.defaultGameProfitPercent || 30,
-        reserveBalance: settings?.reserveBalance || 12500000,
+        reserveBalance: settings?.reserveBalance || 0,
       },
     });
   } catch (error) {
