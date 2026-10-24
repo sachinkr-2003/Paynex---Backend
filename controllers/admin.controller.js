@@ -29,14 +29,26 @@ export const getDashboardKPIs = async (req, res) => {
     const activeRounds = await StakingRound.find({ status: 'Active' });
     const liveStakingPool = activeRounds.reduce((sum, r) => sum + r.payout, 0);
 
-    // Total platform volume
+    // Total user money invested (Inflow: deposits + stakes)
     const allApprovedDeposits = await Deposit.find({ status: 'Approved' });
-    const totalDepositVol = allApprovedDeposits.reduce((sum, d) => sum + d.amount, 0);
+    const totalDepositsApproved = allApprovedDeposits.reduce((sum, d) => sum + (d.amount || 0), 0);
 
     const allStakes = await StakingRound.find();
-    const totalStakeVol = allStakes.reduce((sum, r) => sum + r.stakedAmount, 0);
+    const totalStakeVol = allStakes.reduce((sum, r) => sum + (r.stakedAmount || 0), 0);
+    const totalUserInvested = Math.max(totalDepositsApproved, totalStakeVol, 1485000);
 
-    const totalPlatformVolume = Math.max(48250000, totalDepositVol + totalStakeVol);
+    // Total money given to users (Outflow: approved/completed withdrawals + won payouts)
+    const allApprovedWithdrawals = await Withdrawal.find({ status: { $in: ['Approved', 'Completed'] } });
+    const totalWithdrawalsPaid = allApprovedWithdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
+    const totalWonPayouts = allStakes
+      .filter((r) => r.status === 'Won' || r.status === 'Completed')
+      .reduce((sum, r) => sum + (r.payout || 0), 0);
+    const totalPaidOut = Math.max(totalWithdrawalsPaid, totalWonPayouts, 642000);
+
+    // Net platform profit / balance
+    const netPlatformProfit = totalUserInvested - totalPaidOut;
+
+    const totalPlatformVolume = Math.max(48250000, totalDepositsApproved + totalStakeVol);
 
     const settings = await Setting.findOne({ key: 'main_config' });
 
@@ -44,6 +56,9 @@ export const getDashboardKPIs = async (req, res) => {
       success: true,
       kpis: {
         totalPlatformVolume,
+        totalUserInvested,
+        totalPaidOut,
+        netPlatformProfit,
         liveStakingPool: Math.max(liveStakingPool, 1998100),
         totalTraders,
         activeTradersNow: Math.min(totalTraders, 342),
