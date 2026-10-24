@@ -30,13 +30,14 @@ async function cleanDemoData() {
       {},
       {
         $set: {
-          platformName: 'Paynex',
-          merchantName: 'Paynex'
+          platformName: 'PAYNEX CRYPTO',
+          merchantName: 'Paynex Crypto Technologies Pvt Ltd',
+          officialUpiId: 'paynex.crypto@icici',
         }
       },
       { upsert: true }
     );
-    console.log('Settings updated to Paynex');
+    console.log('Settings updated to PAYNEX CRYPTO');
 
     // Verify remaining documents
     const assetCount = await db.collection('assets').countDocuments();

@@ -20,8 +20,8 @@ export const getWalletHistory = async (req, res) => {
       deposits,
       withdrawals,
       gatewayConfig: {
-        officialUpiId: settings?.officialUpiId || 'paynex@icici',
-        merchantName: settings?.merchantName || 'Paynex Technologies Pvt Ltd',
+        officialUpiId: settings?.officialUpiId || 'paynex.crypto@icici',
+        merchantName: settings?.merchantName || 'Paynex Crypto Technologies Pvt Ltd',
         minDeposit: settings?.minDeposit || 500,
         minWithdrawal: settings?.minWithdrawal || 1000,
       },
