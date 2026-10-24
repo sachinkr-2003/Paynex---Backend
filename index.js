@@ -12,6 +12,7 @@ import walletRoutes from './routes/wallet.routes.js';
 import stakingRoutes from './routes/staking.routes.js';
 import planRoutes from './routes/plan.routes.js';
 import adminRoutes from './routes/admin.routes.js';
+import assetRoutes from './routes/asset.routes.js';
 
 dotenv.config();
 
@@ -49,6 +50,7 @@ app.use('/api/wallet', walletRoutes);
 app.use('/api/staking', stakingRoutes);
 app.use('/api/plans', planRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/assets', assetRoutes);
 
 // Health check endpoint
 app.get('/', (req, res) => {

@@ -2,6 +2,7 @@ import mongoose from 'mongoose';
 import StakingRound from '../models/stakingRound.model.js';
 import User from '../models/user.model.js';
 import Setting from '../models/setting.model.js';
+import Asset from '../models/asset.model.js';
 
 // @desc    Get current guaranteed return rate (+30%)
 // @route   GET /api/staking/rate
@@ -42,7 +43,14 @@ export const placeStake = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Staking engine is currently paused.' });
     }
 
-    const returnRate = settings?.defaultGameProfitPercent || 30;
+    // Look up stock-specific interest rate defined by Admin
+    const cleanAsset = asset ? asset.trim() : 'BTC/USDT';
+    const matchedAsset = await Asset.findOne({
+      $or: [{ id: cleanAsset }, { symbol: cleanAsset.toUpperCase() }],
+      isEnabled: true,
+    });
+
+    const returnRate = matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 30);
     const profit = Math.round((numAmount * returnRate) / 100);
     const payout = numAmount + profit;
     const duration = durationSeconds || 30;
