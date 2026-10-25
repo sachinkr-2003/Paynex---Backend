@@ -161,25 +161,35 @@ export const submitWithdrawal = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Insufficient wallet balance for withdrawal.' });
     }
 
+    // Target Bank Details (Only Bank Account supported - No UPI)
+    const targetAcc = (accountNumber || user.bankDetails?.accountNumber || '').trim();
+    const targetIfsc = (ifsc || user.bankDetails?.ifsc || '').trim().toUpperCase();
+    const targetBankName = (bankName || user.bankDetails?.bankName || 'Bank Transfer').trim();
+    const payeeName = (accountHolder || user.bankDetails?.holderName || user.name || 'Trader').trim();
+
+    if (!targetAcc || !targetIfsc) {
+      return res.status(400).json({
+        success: false,
+        message: 'Kripya pehle apna Bank Account Number aur IFSC Code enter karein. Withdrawal ke liye bank details anivarya hain.',
+      });
+    }
+
+    // Auto-update user's saved bankDetails if newly provided
+    if (!user.bankDetails?.accountNumber || accountNumber) {
+      user.bankDetails = {
+        bankName: targetBankName,
+        accountNumber: targetAcc,
+        ifsc: targetIfsc,
+        holderName: payeeName,
+      };
+    }
+
     // Deduct balance (hold funds)
     user.balance -= numAmount;
     await user.save();
 
-    // ⚡ Dynamic Payout UPI QR Generation for Admin Scan & Pay
-    const targetUpi = (upiId || user.bankDetails?.upiId || '').trim();
-    const targetAcc = (accountNumber || user.bankDetails?.accountNumber || '').trim();
-    const targetIfsc = (ifsc || user.bankDetails?.ifsc || '').trim();
-    const payeeName = (accountHolder || user.name || 'Trader').trim();
-
-    let payoutUpiString = '';
-    if (targetUpi) {
-      payoutUpiString = `upi://pay?pa=${targetUpi}&pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR&tn=${encodeURIComponent(`Withdrawal ${user.uid}`)}`;
-    } else if (targetAcc && targetIfsc) {
-      payoutUpiString = `upi://pay?pa=${targetAcc}@${targetIfsc}.ifsc.npci&pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR&tn=${encodeURIComponent(`Bank Payout ${user.uid}`)}`;
-    } else {
-      payoutUpiString = `upi://pay?pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR`;
-    }
-
+    // ⚡ Dynamic Payout Bank QR Generation for Admin Scan & Pay
+    const payoutUpiString = `upi://pay?pa=${targetAcc}@${targetIfsc}.ifsc.npci&pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR&tn=${encodeURIComponent(`Bank Payout ${user.uid}`)}`;
     const payoutQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payoutUpiString)}`;
 
     const withdrawal = await Withdrawal.create({
@@ -187,9 +197,9 @@ export const submitWithdrawal = async (req, res) => {
       traderUid: user.uid,
       traderName: user.name,
       amount: numAmount,
-      destinationType: destinationType || (targetUpi ? 'UPI' : 'Bank A/C'),
-      upiId: targetUpi,
-      bankName: bankName || user.bankDetails?.bankName || '',
+      destinationType: 'Bank Account',
+      upiId: '',
+      bankName: targetBankName,
       accountNumber: targetAcc,
       ifsc: targetIfsc,
       accountHolder: payeeName,
@@ -200,7 +210,7 @@ export const submitWithdrawal = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: 'Withdrawal request registered. Payout will be dispatched via IMPS.',
+      message: `Withdrawal of ₹${numAmount.toLocaleString('en-IN')} submitted. Payout QR generated for Admin settlement.`,
       withdrawal,
       newBalance: user.balance,
     });
