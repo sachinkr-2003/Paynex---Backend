@@ -5,7 +5,7 @@ import jwt from 'jsonwebtoken';
 const generateToken = (user) => {
   return jwt.sign(
     { id: user._id, uid: user.uid, email: user.email, role: user.role },
-    process.env.JWT_SECRET || 'paynex_crypto_jwt_secret_2026',
+    process.env.JWT_SECRET || 'paynex_crypto_jwt_secret_2026_super_secure_key',
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
 };
@@ -20,17 +20,18 @@ export const register = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Please provide name, email, and password.' });
     }
 
-    const existingUser = await User.findOne({ email: email.toLowerCase() });
+    const cleanEmail = email.toLowerCase().trim();
+    const existingUser = await User.findOne({ email: cleanEmail });
     if (existingUser) {
       return res.status(400).json({ success: false, message: 'User already exists with this email address.' });
     }
 
     const user = await User.create({
-      name,
-      email: email.toLowerCase(),
-      phone: phone || '+91 98765 43210',
+      name: name.trim(),
+      email: cleanEmail,
+      phone: phone ? phone.trim() : '+91 98765 43210',
       password,
-      balance: 25000, // Trial starter balance
+      balance: 0, // Clean, fresh account balance
     });
 
     const token = generateToken(user);
@@ -64,10 +65,18 @@ export const login = async (req, res) => {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      return res.status(400).json({ success: false, message: 'Please provide email and password.' });
+      return res.status(400).json({ success: false, message: 'Please provide email or mobile and password.' });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase() });
+    const clean = email.trim();
+    const user = await User.findOne({
+      $or: [
+        { email: clean.toLowerCase() },
+        { phone: clean },
+        { uid: clean.toUpperCase() },
+      ],
+    });
+
     if (!user) {
       return res.status(401).json({ success: false, message: 'Invalid credentials. User not found.' });
     }

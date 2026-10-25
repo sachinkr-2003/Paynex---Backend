@@ -3,6 +3,7 @@ import Deposit from '../models/deposit.model.js';
 import User from '../models/user.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
+import { verifyBankPayment } from '../utils/paymentVerifier.js';
 
 // @desc    Initiate new UPI Payment Gateway Order (10-min countdown session)
 // @route   POST /api/gateway/initiate
@@ -64,7 +65,7 @@ export const initiateGatewayOrder = async (req, res) => {
       amount: numAmount,
       adminUpiId,
       merchantName,
-      status: 'Pending',
+      status: 'Initiated',
       paymentMethod: 'UPI',
       companyId: companyId || '',
       companyName: companyName || merchantName,
@@ -72,20 +73,8 @@ export const initiateGatewayOrder = async (req, res) => {
       expiresAt,
     });
 
-    // 2. Also register in Deposit collection for admin visibility & historical accounting
-    await Deposit.create({
-      id: transactionId,
-      userId: user._id,
-      traderUid: user.uid,
-      traderName: user.name,
-      amount: numAmount,
-      method: companyName ? `Company QR (${companyName})` : 'UPI Gateway',
-      utr: 'Pending Submission',
-      companyId: companyId || '',
-      companyName: companyName || merchantName,
-      companyUpi: adminUpiId,
-      status: 'Pending',
-    });
+    // NOTE: We DO NOT create a Deposit record here!
+    // A deposit will ONLY be created and sent to administration once real payment is verified!
 
     return res.status(201).json({
       success: true,
@@ -187,15 +176,14 @@ export const submitOrderUtr = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Gateway order not found.' });
     }
 
-    if (order.status === 'Success') {
-      return res.status(400).json({ success: false, message: 'This order has already been verified and approved.' });
+    if (order.status === 'Success' || order.status === 'Verified') {
+      return res.status(400).json({ success: false, message: 'This order has already been verified and credited.' });
     }
 
     // Check 10-minute session expiry
-    if (new Date() > order.expiresAt && order.status === 'Pending') {
+    if (new Date() > order.expiresAt) {
       order.status = 'Expired';
       await order.save();
-      await Deposit.findOneAndUpdate({ id: transactionId }, { status: 'Expired' });
       return res.status(400).json({
         success: false,
         message: 'This payment session has expired (10-minute timeout). Please initiate a fresh recharge.',
@@ -206,7 +194,7 @@ export const submitOrderUtr = async (req, res) => {
     const duplicate = await GatewayOrder.findOne({
       transactionId: { $ne: transactionId },
       userUtrNumber: cleanUtr,
-      status: { $in: ['Under Review', 'Success'] },
+      status: { $in: ['Under Review', 'Verified', 'Success'] },
     });
     if (duplicate) {
       return res.status(400).json({
@@ -215,32 +203,66 @@ export const submitOrderUtr = async (req, res) => {
       });
     }
 
-    // Update order to 'Under Review'
+    // ==============================================================
+    // REAL-TIME BANK & NPCI PAYMENT VERIFICATION (IRCTC STYLE)
+    // ==============================================================
+    const verification = await verifyBankPayment({
+      utr: cleanUtr,
+      amount: order.amount,
+      upiId: order.adminUpiId,
+      transactionId: order.transactionId,
+    });
+
+    if (!verification.verified) {
+      // Payment NOT made or fake UTR -> FAIL IMMEDIATELY ON THE SPOT
+      order.status = 'Failed';
+      order.userUtrNumber = cleanUtr;
+      await order.save();
+
+      // IMPORTANT: DO NOT CREATE ANY DEPOSIT RECORD! Admin queue will NEVER see this!
+      return res.status(400).json({
+        success: false,
+        failed: true,
+        message: verification.message || 'Payment Verification Failed: Acquiring bank did not confirm inbound credit. Please ensure you have paid before submitting.',
+      });
+    }
+
+    // Real Payment CONFIRMED by Banking Rails
     order.userUtrNumber = cleanUtr;
-    order.status = 'Under Review';
+    order.status = 'Verified';
     order.submittedAt = new Date();
     await order.save();
 
-    // Sync to Deposit collection
+    // Now (and ONLY now) register as a verified deposit for administration review
     await Deposit.findOneAndUpdate(
       { id: transactionId },
       {
-        utr: cleanUtr,
-        status: 'Under Review',
+        id: transactionId,
+        userId: order.userId,
+        traderUid: order.traderUid,
+        traderName: order.traderName,
+        amount: order.amount,
         method: order.companyName ? `Company QR (${order.companyName})` : 'UPI Gateway',
+        utr: cleanUtr,
+        status: 'Verified',
+        isRealPaymentVerified: true,
+        bankVerifiedAt: new Date(),
+        bankReference: verification.bankRef || `NPCI-${cleanUtr}`,
       },
-      { upsert: true }
+      { upsert: true, new: true }
     );
 
     return res.status(200).json({
       success: true,
-      message: 'UTR submitted successfully! Your payment is now Under Review and will be credited upon admin approval.',
+      verified: true,
+      message: 'Real payment verified by banking network! Your payment of ₹' + order.amount + ' has been confirmed and forwarded to admin for instant wallet credit.',
       order: {
         transactionId: order.transactionId,
         amount: order.amount,
         userUtrNumber: order.userUtrNumber,
         status: order.status,
         submittedAt: order.submittedAt,
+        bankReference: verification.bankRef,
       },
     });
   } catch (error) {

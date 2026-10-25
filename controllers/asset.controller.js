@@ -124,12 +124,27 @@ export const updateAsset = async (req, res) => {
     const { id } = req.params;
     const updates = req.body;
 
-    const asset = await Asset.findOne({
-      $or: [{ id }, { symbol: id.toUpperCase() }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }],
-    });
+    const isHex24 = /^[0-9a-fA-F]{24}$/.test(id);
+    const queryConditions = [
+      { id: id },
+      { symbol: id.toUpperCase() },
+    ];
+    if (isHex24) {
+      queryConditions.push({ _id: id });
+    }
+
+    let asset = await Asset.findOne({ $or: queryConditions });
 
     if (!asset) {
-      return res.status(404).json({ success: false, message: 'Asset not found.' });
+      // Auto-upsert asset so company QR updates are never lost even if newly referenced
+      asset = new Asset({
+        id: id,
+        name: updates.name || id,
+        symbol: (updates.symbol || id).toUpperCase(),
+        basePrice: Number(updates.basePrice) || 1000,
+        returnPercent: Number(updates.returnPercent) || 30,
+        category: updates.category || 'Stock',
+      });
     }
 
     if (updates.name !== undefined) asset.name = updates.name.trim();

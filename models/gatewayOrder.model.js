@@ -43,8 +43,8 @@ const gatewayOrderSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Pending', 'Under Review', 'Success', 'Failed', 'Expired'],
-      default: 'Pending',
+      enum: ['Initiated', 'Pending', 'Under Review', 'Verified', 'Success', 'Failed', 'Expired'],
+      default: 'Initiated',
     },
     paymentMethod: {
       type: String,

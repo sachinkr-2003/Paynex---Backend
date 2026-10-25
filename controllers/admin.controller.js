@@ -191,6 +191,9 @@ export const getAllDeposits = async (req, res) => {
 
     if (status && status !== 'All') {
       query.status = status;
+    } else {
+      // Hide uninitiated or failed junk sessions
+      query.status = { $in: ['Verified', 'Under Review', 'Approved', 'Success', 'Rejected', 'Pending'] };
     }
 
     const deposits = await Deposit.find(query).sort({ createdAt: -1 });
@@ -217,6 +220,13 @@ export const approveDeposit = async (req, res) => {
 
     if (deposit.status === 'Approved' || deposit.status === 'Success') {
       return res.status(400).json({ success: false, message: 'Deposit has already been approved.' });
+    }
+
+    if (deposit.status === 'Failed' || deposit.status === 'Expired') {
+      return res.status(400).json({
+        success: false,
+        message: 'Security Alert: This deposit was rejected by the banking switch and cannot be approved.',
+      });
     }
 
     deposit.status = 'Approved';

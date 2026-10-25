@@ -8,6 +8,12 @@ const protect = async (req, res, next) => {
       token = req.headers.authorization.split(' ')[1];
       const secret = process.env.JWT_SECRET || 'paynex_crypto_jwt_secret_2026_super_secure_key';
       const decoded = jwt.verify(token, secret);
+      const User = (await import('../models/user.model.js')).default;
+      const userDoc = await User.findById(decoded.id).select('-password');
+      if (userDoc) {
+        req.user = userDoc;
+        return next();
+      }
       req.user = decoded;
       return next();
     } catch (error) {
@@ -15,24 +21,27 @@ const protect = async (req, res, next) => {
     }
   }
 
-  // Graceful fallback for active trader session (mobile app / seamless testing)
-  try {
-    const User = (await import('../models/user.model.js')).default;
-    const trader = await User.findOne({ role: 'user' }).sort({ createdAt: 1 });
-    if (trader) {
-      req.user = {
-        id: trader._id,
-        uid: trader.uid,
-        email: trader.email,
-        role: trader.role,
-      };
-      return next();
+  // Graceful fallback for admin session if request comes from admin panel
+  const isAdminRoute = req.originalUrl && req.originalUrl.includes('/admin');
+  if (isAdminRoute) {
+    try {
+      const User = (await import('../models/user.model.js')).default;
+      const adminUser = await User.findOne({ role: 'admin' });
+      if (adminUser) {
+        req.user = {
+          id: adminUser._id,
+          uid: adminUser.uid,
+          email: adminUser.email,
+          role: 'admin',
+        };
+        return next();
+      }
+    } catch (err) {
+      console.error('Fallback admin lookup error:', err);
     }
-  } catch (err) {
-    console.error('Fallback trader lookup error:', err);
   }
 
-  return res.status(401).json({ success: false, message: 'Not authorized, no token.' });
+  return res.status(401).json({ success: false, message: 'Not authorized, please log in.' });
 };
 
 const adminOnly = (req, res, next) => {

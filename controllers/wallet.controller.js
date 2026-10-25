@@ -2,6 +2,7 @@ import Deposit from '../models/deposit.model.js';
 import Withdrawal from '../models/withdrawal.model.js';
 import User from '../models/user.model.js';
 import Setting from '../models/setting.model.js';
+import { verifyBankPayment } from '../utils/paymentVerifier.js';
 
 // @desc    Get user wallet details, deposits, and withdrawals
 // @route   GET /api/wallet/history
@@ -54,25 +55,49 @@ export const submitDeposit = async (req, res) => {
       return res.status(400).json({ success: false, message: 'This UTR has already been submitted for verification.' });
     }
 
+    // ==============================================================
+    // REAL-TIME BANK & NPCI PAYMENT VERIFICATION (IRCTC STYLE)
+    // ==============================================================
+    const verification = await verifyBankPayment({
+      utr: utr.trim(),
+      amount: Number(amount),
+      upiId: companyUpi || settings?.officialUpiId,
+    });
+
+    if (!verification.verified) {
+      // Payment NOT detected on banking rails -> FAIL ON THE SPOT
+      // DO NOT create any deposit record for administration!
+      return res.status(400).json({
+        success: false,
+        failed: true,
+        message: verification.message || 'Payment Verification Failed: Acquiring bank did not confirm inbound credit. Please ensure you have paid via UPI before submitting.',
+      });
+    }
+
     const user = await User.findById(userId);
 
+    // Create verified deposit record for administration review
     const deposit = await Deposit.create({
       userId,
       traderUid: user?.uid || 'PAYNEX-USER',
       traderName: user?.name || 'Trader',
       amount: Number(amount),
       method: method || 'UPI',
-      utr: utr.trim(),
+      utr: verification.cleanUtr,
       screenshotProof: screenshotProof || 'paynex_receipt_verified.png',
       companyId: companyId || '',
       companyName: companyName || '',
       companyUpi: companyUpi || '',
-      status: 'Pending',
+      status: 'Verified',
+      isRealPaymentVerified: true,
+      bankVerifiedAt: new Date(),
+      bankReference: verification.bankRef || `NPCI-${verification.cleanUtr}`,
     });
 
     return res.status(201).json({
       success: true,
-      message: 'Deposit request submitted successfully. It will be verified by administration within 15 minutes.',
+      verified: true,
+      message: 'Real payment verified by banking network! Your payment of ₹' + amount + ' has been confirmed and forwarded to admin for instant credit.',
       deposit,
     });
   } catch (error) {
@@ -81,12 +106,33 @@ export const submitDeposit = async (req, res) => {
   }
 };
 
-// @desc    Submit withdrawal request
+// @desc    Submit withdrawal request with password security verification
 // @route   POST /api/wallet/withdraw
 export const submitWithdrawal = async (req, res) => {
   try {
-    const { amount, destinationType, upiId, bankName, accountNumber, ifsc } = req.body;
+    const { amount, method, destinationType, upiId, bankName, accountNumber, ifsc, accountHolder, password } = req.body;
     const userId = req.user.id;
+
+    if (!password || typeof password !== 'string' || !password.trim()) {
+      return res.status(401).json({
+        success: false,
+        message: 'Security Verification Required: Please enter your account login password to authorize this withdrawal.',
+      });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    // Verify that entered password matches the account password used to login
+    const isPasswordMatch = await user.comparePassword(password.trim());
+    if (!isPasswordMatch) {
+      return res.status(401).json({
+        success: false,
+        message: 'Incorrect Password! Withdrawal authorization failed. Please enter the valid password you use to log in.',
+      });
+    }
 
     if (!amount || Number(amount) <= 0) {
       return res.status(400).json({ success: false, message: 'Please provide a valid withdrawal amount.' });
@@ -104,7 +150,6 @@ export const submitWithdrawal = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Withdrawals are currently suspended due to system maintenance.' });
     }
 
-    const user = await User.findById(userId);
     if (user.balance < numAmount) {
       return res.status(400).json({ success: false, message: 'Insufficient wallet balance for withdrawal.' });
     }

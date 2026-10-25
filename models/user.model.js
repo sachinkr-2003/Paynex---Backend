@@ -37,7 +37,7 @@ const userSchema = new mongoose.Schema(
     },
     balance: {
       type: Number,
-      default: 25000, // Starting trial wallet balance
+      default: 0, // Clean starting wallet balance
     },
     totalStaked: {
       type: Number,

@@ -54,8 +54,19 @@ const depositSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Pending', 'Under Review', 'Approved', 'Success', 'Rejected', 'Failed', 'Expired'],
+      enum: ['Pending', 'Under Review', 'Verified', 'Approved', 'Success', 'Rejected', 'Failed', 'Expired'],
       default: 'Pending',
+    },
+    isRealPaymentVerified: {
+      type: Boolean,
+      default: false,
+    },
+    bankVerifiedAt: {
+      type: Date,
+    },
+    bankReference: {
+      type: String,
+      default: '',
     },
     time: {
       type: String,
