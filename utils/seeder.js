@@ -45,22 +45,7 @@ export const seedDatabase = async () => {
       console.log(`✅ Seeded Super Admin: ${adminEmail} (password: admin123)`);
     }
 
-    // 3. Seed Primary Trader if empty
-    const userCount = await User.countDocuments({ role: 'user' });
-    if (userCount === 0) {
-      await User.create({
-        uid: 'PAYNEX-884920',
-        name: 'Sachin Kumar (Skraj0451)',
-        email: 'skraj0451@gmail.com',
-        phone: '+91 98765 43210',
-        password: 'password123',
-        balance: 0,
-        totalStaked: 0,
-        totalWon: 0,
-        kycStatus: 'Verified',
-      });
-      console.log('✅ Seeded primary user: skraj0451@gmail.com');
-    }
+    // 3. Clean user base: Do not auto-seed dummy users (users will register cleanly via App/Web)
 
     // 4. Seed Investment Plans if empty
     const planCount = await Plan.countDocuments();
