@@ -14,6 +14,7 @@ import {
   getSettings,
   updateSettings,
   triggerDailyInterest,
+  adminResetUserPassword,
 } from '../controllers/admin.controller.js';
 import { protect, adminOnly } from '../middlewares/auth.middleware.js';
 
@@ -25,6 +26,7 @@ router.get('/users', getAllTraders);
 router.get('/traders', getAllTraders);
 router.put('/users/:id/balance', adjustUserBalance);
 router.put('/users/:id/status', updateUserStatus);
+router.put('/users/:id/reset-password', adminResetUserPassword);
 
 router.get('/deposits', getAllDeposits);
 router.put('/deposits/:id/approve', approveDeposit);

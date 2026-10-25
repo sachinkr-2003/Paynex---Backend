@@ -1,6 +1,7 @@
 import User from '../models/user.model.js';
 import jwt from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
+import { sendPasswordResetOtpEmail } from '../services/emailService.js';
 
 // Helper to generate JWT
 const generateToken = (user) => {
@@ -247,3 +248,115 @@ export const updateProfile = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Initiate Forgot Password - Generate & Send 6-Digit Email OTP
+// @route   POST /api/auth/forgot-password
+export const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email || !email.trim()) {
+      return res.status(400).json({ success: false, message: 'Please enter your registered email address.' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'No registered PAYNEX account found with this email address.' });
+    }
+
+    // Generate 6-digit random numeric OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    user.resetPasswordOtp = otp;
+    user.resetPasswordOtpExpires = new Date(Date.now() + 15 * 60 * 1000); // Valid for 15 minutes
+    await user.save();
+
+    await sendPasswordResetOtpEmail(user.email, user.name, otp);
+
+    return res.status(200).json({
+      success: true,
+      message: `A 6-digit OTP code has been sent to ${cleanEmail}. Please check your inbox or spam folder.`,
+      email: cleanEmail,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Verify 6-digit Reset OTP
+// @route   POST /api/auth/verify-reset-otp
+export const verifyResetOtp = async (req, res) => {
+  try {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+      return res.status(400).json({ success: false, message: 'Please provide email and 6-digit OTP code.' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = otp.toString().trim();
+
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (!user.resetPasswordOtp || user.resetPasswordOtp !== cleanOtp) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please enter the correct 6-digit code.' });
+    }
+
+    if (!user.resetPasswordOtpExpires || new Date() > user.resetPasswordOtpExpires) {
+      return res.status(400).json({ success: false, message: 'OTP code has expired. Please request a new OTP.' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'OTP verified successfully. You may now enter your new password.',
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Reset Password using verified OTP
+// @route   POST /api/auth/reset-password
+export const resetPassword = async (req, res) => {
+  try {
+    const { email, otp, newPassword } = req.body;
+    if (!email || !otp || !newPassword) {
+      return res.status(400).json({ success: false, message: 'Please provide email, OTP, and your new password.' });
+    }
+
+    if (newPassword.trim().length < 4) {
+      return res.status(400).json({ success: false, message: 'New password must be at least 4 characters long.' });
+    }
+
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanOtp = otp.toString().trim();
+
+    const user = await User.findOne({ email: cleanEmail });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (!user.resetPasswordOtp || user.resetPasswordOtp !== cleanOtp) {
+      return res.status(400).json({ success: false, message: 'Invalid OTP code. Please check and try again.' });
+    }
+
+    if (!user.resetPasswordOtpExpires || new Date() > user.resetPasswordOtpExpires) {
+      return res.status(400).json({ success: false, message: 'OTP code has expired. Please request a new OTP.' });
+    }
+
+    // Set new password (auto-hashed by pre-save hook) and clear OTP
+    user.password = newPassword.trim();
+    user.resetPasswordOtp = null;
+    user.resetPasswordOtpExpires = null;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Your password has been reset successfully! You can now sign in with your new password.',
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+

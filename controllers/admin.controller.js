@@ -513,3 +513,36 @@ export const triggerDailyInterest = async (req, res) => {
   }
 };
 
+// @desc    Admin Reset User Password Directly
+// @route   PUT /api/admin/users/:id/reset-password
+export const adminResetUserPassword = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { newPassword } = req.body;
+    const cleanPassword = (newPassword || 'trader123').trim();
+
+    if (cleanPassword.length < 4) {
+      return res.status(400).json({ success: false, message: 'Password must be at least 4 characters long.' });
+    }
+
+    const user = await User.findOne({ $or: [{ _id: id }, { uid: id }] });
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    user.password = cleanPassword;
+    user.resetPasswordOtp = null;
+    user.resetPasswordOtpExpires = null;
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Password for ${user.name} (${user.uid}) has been reset to: ${cleanPassword}`,
+      newPassword: cleanPassword,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+
