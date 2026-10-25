@@ -1,5 +1,6 @@
 import User from '../models/user.model.js';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 
 // Helper to generate JWT
 const generateToken = (user) => {
@@ -134,6 +135,7 @@ export const login = async (req, res) => {
         kycStatus: user.kycStatus,
         vipLevel: user.vipLevel,
         bankDetails: user.bankDetails,
+        hasWithdrawalPassword: Boolean(user.withdrawalPassword),
         referralCount: user.referralCount || 0,
         referralEarnings: user.referralEarnings || 0,
         referrerUid: user.referrerUid || null,
@@ -154,31 +156,73 @@ export const getMe = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
+    const userObj = user.toObject();
+    const hasWithdrawalPassword = Boolean(user.withdrawalPassword);
+    delete userObj.withdrawalPassword;
+
     return res.status(200).json({
       success: true,
-      user,
+      user: {
+        ...userObj,
+        hasWithdrawalPassword,
+      },
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// @desc    Update profile or bank details
+// @desc    Update profile, login password, or withdrawal password
 // @route   PUT /api/auth/profile
 export const updateProfile = async (req, res) => {
   try {
-    const { phone, bankDetails, name, password } = req.body;
+    const { phone, bankDetails, name, password, currentPassword, withdrawalPassword, currentWithdrawalPassword } = req.body;
     const user = await User.findById(req.user.id);
 
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    if (name) user.name = name;
-    if (phone) user.phone = phone;
-    if (password && password.length >= 6) {
+    if (name) user.name = name.trim();
+    if (phone) user.phone = phone.trim();
+
+    // Change Login Password
+    if (password) {
+      if (password.length < 6) {
+        return res.status(400).json({ success: false, message: 'New login password must be at least 6 characters long.' });
+      }
+      if (currentPassword) {
+        const isMatch = await user.comparePassword(currentPassword);
+        if (!isMatch) {
+          return res.status(400).json({ success: false, message: 'Current login password is incorrect.' });
+        }
+      }
       user.password = password;
     }
+
+    // Create / Change Withdrawal Password (Fund PIN / Password)
+    if (withdrawalPassword) {
+      const cleanWithdrawPass = withdrawalPassword.toString().trim();
+      if (cleanWithdrawPass.length < 4) {
+        return res.status(400).json({ success: false, message: 'Withdrawal password must be at least 4 digits/characters long.' });
+      }
+      // If user already has a withdrawal password set and provides current PIN/password
+      if (user.withdrawalPassword && (currentWithdrawalPassword || currentPassword)) {
+        let isPinMatch = false;
+        if (currentWithdrawalPassword) {
+          isPinMatch = await user.compareWithdrawalPassword(currentWithdrawalPassword.toString().trim());
+        }
+        if (!isPinMatch && currentPassword) {
+          isPinMatch = await user.comparePassword(currentPassword);
+        }
+        if (!isPinMatch) {
+          return res.status(400).json({ success: false, message: 'Incorrect current withdrawal password or login password.' });
+        }
+      }
+      const salt = await bcrypt.genSalt(10);
+      user.withdrawalPassword = await bcrypt.hash(cleanWithdrawPass, salt);
+    }
+
     if (bankDetails) {
       user.bankDetails = { ...user.bankDetails, ...bankDetails };
     }
@@ -187,7 +231,7 @@ export const updateProfile = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: 'Profile updated successfully.',
+      message: 'Profile & security settings updated successfully.',
       user: {
         id: user._id,
         uid: user.uid,
@@ -196,6 +240,7 @@ export const updateProfile = async (req, res) => {
         phone: user.phone,
         balance: user.balance,
         bankDetails: user.bankDetails,
+        hasWithdrawalPassword: Boolean(user.withdrawalPassword),
       },
     });
   } catch (error) {

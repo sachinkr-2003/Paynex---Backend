@@ -126,12 +126,18 @@ export const submitWithdrawal = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    // Verify that entered password matches the account password used to login
-    const isPasswordMatch = await user.comparePassword(password.trim());
+    // Verify that entered password matches the withdrawal password (if configured) or account login password
+    let isPasswordMatch = false;
+    if (user.withdrawalPassword) {
+      isPasswordMatch = await user.compareWithdrawalPassword(password.trim());
+    }
+    if (!isPasswordMatch) {
+      isPasswordMatch = await user.comparePassword(password.trim());
+    }
     if (!isPasswordMatch) {
       return res.status(401).json({
         success: false,
-        message: 'Incorrect Password! Withdrawal authorization failed. Please enter the valid password you use to log in.',
+        message: 'Incorrect Password! Please enter your valid Withdrawal Password or Account Login Password to authorize this withdrawal.',
       });
     }
 

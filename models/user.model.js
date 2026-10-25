@@ -30,6 +30,10 @@ const userSchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+    withdrawalPassword: {
+      type: String,
+      default: null,
+    },
     role: {
       type: String,
       enum: ['user', 'admin'],
@@ -106,6 +110,12 @@ userSchema.pre('save', async function () {
 // Method to verify password
 userSchema.methods.comparePassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
+};
+
+// Method to verify withdrawal password
+userSchema.methods.compareWithdrawalPassword = async function (enteredPassword) {
+  if (!this.withdrawalPassword) return false;
+  return await bcrypt.compare(enteredPassword, this.withdrawalPassword);
 };
 
 const User = mongoose.model('User', userSchema);
