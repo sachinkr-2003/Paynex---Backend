@@ -155,7 +155,7 @@ export const getGatewayOrder = async (req, res) => {
 export const submitOrderUtr = async (req, res) => {
   try {
     const { transactionId } = req.params;
-    const { utr } = req.body;
+    const { utr, screenshotProof } = req.body;
 
     if (!utr || typeof utr !== 'string') {
       return res.status(400).json({ success: false, message: 'Please provide the 12-digit UPI UTR / Reference number.' });
@@ -229,6 +229,7 @@ export const submitOrderUtr = async (req, res) => {
 
     // Real Payment CONFIRMED by Banking Rails
     order.userUtrNumber = cleanUtr;
+    if (screenshotProof) order.screenshotProof = screenshotProof;
     order.status = 'Verified';
     order.submittedAt = new Date();
     await order.save();
@@ -244,6 +245,7 @@ export const submitOrderUtr = async (req, res) => {
         amount: order.amount,
         method: order.companyName ? `Company QR (${order.companyName})` : 'UPI Gateway',
         utr: cleanUtr,
+        screenshotProof: screenshotProof || order.screenshotProof || 'paynex_receipt_verified.png',
         status: 'Verified',
         isRealPaymentVerified: true,
         bankVerifiedAt: new Date(),

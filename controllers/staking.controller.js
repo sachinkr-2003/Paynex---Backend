@@ -4,12 +4,13 @@ import User from '../models/user.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
 
-// @desc    Get current guaranteed return rate (+30%)
+// @desc    Get current guaranteed return rate (2% - 12%)
 // @route   GET /api/staking/rate
 export const getReturnRate = async (req, res) => {
   try {
     const settings = await Setting.findOne({ key: 'main_config' });
-    const rate = settings?.defaultGameProfitPercent || 30;
+    const rawRate = settings?.defaultGameProfitPercent || 5;
+    const rate = Math.min(12, Math.max(2, rawRate));
 
     return res.status(200).json({
       success: true,
@@ -43,14 +44,15 @@ export const placeStake = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Staking engine is currently paused.' });
     }
 
-    // Look up stock-specific interest rate defined by Admin
+    // Look up stock-specific interest rate defined by Admin (clamped strictly 2% - 12%)
     const cleanAsset = asset ? asset.trim() : 'BTC/USDT';
     const matchedAsset = await Asset.findOne({
       $or: [{ id: cleanAsset }, { symbol: cleanAsset.toUpperCase() }],
       isEnabled: true,
     });
 
-    const returnRate = matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 30);
+    const rawReturnRate = matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 5);
+    const returnRate = Math.min(12, Math.max(2, rawReturnRate));
     const profit = Math.round((numAmount * returnRate) / 100);
     const payout = numAmount + profit;
     const duration = durationSeconds || 30;

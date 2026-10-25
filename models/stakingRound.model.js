@@ -34,7 +34,9 @@ const stakingRoundSchema = new mongoose.Schema(
     returnPercent: {
       type: Number,
       required: true,
-      default: 30, // 30% fixed return
+      default: 5,
+      min: 2,
+      max: 12,
     },
     profit: {
       type: Number,

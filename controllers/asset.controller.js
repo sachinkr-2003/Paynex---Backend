@@ -51,7 +51,7 @@ export const getAdminAssets = async (req, res) => {
   }
 };
 
-// @desc    Create new stock / crypto game asset
+// @desc    Create new stock / game asset
 // @route   POST /api/admin/assets
 export const createAsset = async (req, res) => {
   try {
@@ -67,49 +67,61 @@ export const createAsset = async (req, res) => {
       minStake,
       maxStake,
       isEnabled,
+      upiId,
+      qrCode,
+      payeeName,
       description,
     } = req.body;
 
-    if (!name || !symbol || !basePrice) {
+    if (!name || !name.trim()) {
       return res.status(400).json({
         success: false,
-        message: 'Name, Symbol, and Base Price are required.',
+        message: 'Stock name is required.',
       });
     }
 
-    const cleanSymbol = symbol.trim().toUpperCase();
-    const assetId = cleanSymbol.includes('/') ? cleanSymbol : `${cleanSymbol}/INR`;
+    const cleanName = name.trim();
+    // Auto-generate clean symbol if not provided
+    let cleanSymbol = symbol && symbol.trim()
+      ? symbol.trim().toUpperCase()
+      : cleanName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 10).toUpperCase() || 'STOCK';
+    
+    let assetId = cleanSymbol.includes('/') ? cleanSymbol : `${cleanSymbol}/INR`;
 
+    // If duplicate symbol exists, append a random number suffix to avoid conflict
     const existing = await Asset.findOne({ $or: [{ id: assetId }, { symbol: cleanSymbol }] });
     if (existing) {
-      return res.status(400).json({
-        success: false,
-        message: `An asset with symbol "${cleanSymbol}" already exists.`,
-      });
+      const suffix = Math.floor(100 + Math.random() * 900);
+      cleanSymbol = `${cleanSymbol}${suffix}`;
+      assetId = `${cleanSymbol}/INR`;
     }
+
+    const targetReturn = Math.min(12, Math.max(2, Number(returnPercent) || 5));
+    const targetMinStake = Math.max(100, Number(minStake) || 100);
+    const targetBasePrice = Number(basePrice) || targetMinStake || 1000;
 
     const newAsset = await Asset.create({
       id: assetId,
-      name: name.trim(),
+      name: cleanName,
       symbol: cleanSymbol,
-      category: category || (cleanSymbol.includes('/') ? 'Crypto' : 'Stock'),
-      basePrice: Number(basePrice),
-      step: Number(step) || Math.max(1, Number(basePrice) * 0.005),
-      icon: icon || (category === 'Stock' ? '🏢' : '₿'),
+      category: category || 'Stock',
+      basePrice: targetBasePrice,
+      step: Number(step) || Math.max(1, targetBasePrice * 0.005),
+      icon: icon || '📈',
       color: color || '#f59e0b',
-      returnPercent: Number(returnPercent) || 30, // Custom interest % set by admin
-      minStake: Number(minStake) || 100,
+      returnPercent: targetReturn, // strictly 2% - 12%
+      minStake: targetMinStake,
       maxStake: Number(maxStake) || 500000,
-      isEnabled: isEnabled !== undefined ? isEnabled : true,
-      upiId: (req.body.upiId || '').trim(),
-      qrCode: req.body.qrCode || '',
-      payeeName: (req.body.payeeName || '').trim(),
+      isEnabled: isEnabled !== undefined ? Boolean(isEnabled) : true,
+      upiId: (upiId || '').trim(),
+      qrCode: qrCode || '',
+      payeeName: (payeeName || `${cleanName} Desk`).trim(),
       description: description || '',
     });
 
     return res.status(201).json({
       success: true,
-      message: `Asset "${newAsset.name}" (+${newAsset.returnPercent}% interest) created successfully.`,
+      message: `Stock "${newAsset.name}" (+${newAsset.returnPercent}% interest, Min ₹${newAsset.minStake}) created successfully.`,
       asset: newAsset,
     });
   } catch (error) {
@@ -142,7 +154,8 @@ export const updateAsset = async (req, res) => {
         name: updates.name || id,
         symbol: (updates.symbol || id).toUpperCase(),
         basePrice: Number(updates.basePrice) || 1000,
-        returnPercent: Number(updates.returnPercent) || 30,
+        returnPercent: Math.min(12, Math.max(2, Number(updates.returnPercent) || 5)),
+        minStake: Math.max(100, Number(updates.minStake) || 100),
         category: updates.category || 'Stock',
       });
     }
@@ -153,8 +166,12 @@ export const updateAsset = async (req, res) => {
     if (updates.step !== undefined) asset.step = Number(updates.step);
     if (updates.icon !== undefined) asset.icon = updates.icon;
     if (updates.color !== undefined) asset.color = updates.color;
-    if (updates.returnPercent !== undefined) asset.returnPercent = Number(updates.returnPercent);
-    if (updates.minStake !== undefined) asset.minStake = Number(updates.minStake);
+    if (updates.returnPercent !== undefined) {
+      asset.returnPercent = Math.min(12, Math.max(2, Number(updates.returnPercent)));
+    }
+    if (updates.minStake !== undefined) {
+      asset.minStake = Math.max(100, Number(updates.minStake));
+    }
     if (updates.maxStake !== undefined) asset.maxStake = Number(updates.maxStake);
     if (updates.isEnabled !== undefined) asset.isEnabled = Boolean(updates.isEnabled);
     if (updates.upiId !== undefined) asset.upiId = updates.upiId.trim();
@@ -166,7 +183,7 @@ export const updateAsset = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Asset "${asset.name}" updated successfully (+${asset.returnPercent}% return).`,
+      message: `Stock "${asset.name}" updated successfully (+${asset.returnPercent}% interest, Min ₹${asset.minStake}).`,
       asset,
     });
   } catch (error) {
@@ -180,17 +197,24 @@ export const deleteAsset = async (req, res) => {
   try {
     const { id } = req.params;
 
-    const asset = await Asset.findOneAndDelete({
-      $or: [{ id }, { symbol: id.toUpperCase() }, { _id: id.match(/^[0-9a-fA-F]{24}$/) ? id : null }],
-    });
+    const isHex24 = /^[0-9a-fA-F]{24}$/.test(id);
+    const queryConditions = [
+      { id: id },
+      { symbol: id.toUpperCase() },
+    ];
+    if (isHex24) {
+      queryConditions.push({ _id: id });
+    }
+
+    const asset = await Asset.findOneAndDelete({ $or: queryConditions });
 
     if (!asset) {
-      return res.status(404).json({ success: false, message: 'Asset not found.' });
+      return res.status(404).json({ success: false, message: 'Stock not found.' });
     }
 
     return res.status(200).json({
       success: true,
-      message: `Asset "${asset.name}" has been removed from trading engine.`,
+      message: `Stock "${asset.name}" has been removed from system.`,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

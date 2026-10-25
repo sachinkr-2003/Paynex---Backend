@@ -14,7 +14,7 @@ const generateToken = (user) => {
 // @route   POST /api/auth/register
 export const register = async (req, res) => {
   try {
-    const { name, email, phone, password } = req.body;
+    const { name, email, phone, password, referralCode } = req.body;
 
     if (!name || !email || !password) {
       return res.status(400).json({ success: false, message: 'Please provide name, email, and password.' });
@@ -26,12 +26,34 @@ export const register = async (req, res) => {
       return res.status(400).json({ success: false, message: 'User already exists with this email address.' });
     }
 
+    // Check optional referral code
+    let referredBy = null;
+    let referrerUid = null;
+    if (referralCode && typeof referralCode === 'string' && referralCode.trim()) {
+      const cleanRef = referralCode.trim();
+      const referrer = await User.findOne({
+        $or: [
+          { uid: cleanRef.toUpperCase() },
+          { email: cleanRef.toLowerCase() },
+          { phone: cleanRef },
+        ],
+      });
+      if (referrer) {
+        referredBy = referrer._id;
+        referrerUid = referrer.uid;
+        referrer.referralCount = (referrer.referralCount || 0) + 1;
+        await referrer.save();
+      }
+    }
+
     const user = await User.create({
       name: name.trim(),
       email: cleanEmail,
       phone: phone ? phone.trim() : '+91 98765 43210',
       password,
       balance: 0, // Clean, fresh account balance
+      referredBy,
+      referrerUid,
     });
 
     const token = generateToken(user);
@@ -50,6 +72,9 @@ export const register = async (req, res) => {
         balance: user.balance,
         kycStatus: user.kycStatus,
         vipLevel: user.vipLevel,
+        referralCount: user.referralCount || 0,
+        referralEarnings: user.referralEarnings || 0,
+        referrerUid: user.referrerUid || null,
       },
     });
   } catch (error) {
@@ -109,6 +134,9 @@ export const login = async (req, res) => {
         kycStatus: user.kycStatus,
         vipLevel: user.vipLevel,
         bankDetails: user.bankDetails,
+        referralCount: user.referralCount || 0,
+        referralEarnings: user.referralEarnings || 0,
+        referrerUid: user.referrerUid || null,
       },
     });
   } catch (error) {

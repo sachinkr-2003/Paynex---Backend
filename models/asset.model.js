@@ -26,7 +26,7 @@ const assetSchema = new mongoose.Schema(
     },
     basePrice: {
       type: Number,
-      required: true,
+      default: 1000,
       min: 0.01,
     },
     step: {
@@ -44,9 +44,9 @@ const assetSchema = new mongoose.Schema(
     returnPercent: {
       type: Number,
       required: true,
-      default: 30, // Admin-defined interest % rate for this specific stock
-      min: 1,
-      max: 500,
+      default: 5, // Range 2% to 12% max
+      min: 2,
+      max: 12,
     },
     minStake: {
       type: Number,

@@ -209,10 +209,11 @@ export const getAllDeposits = async (req, res) => {
 export const approveDeposit = async (req, res) => {
   try {
     const { id } = req.params;
-    const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
-    const deposit = await Deposit.findOne({
-      $or: [{ id }, { ...(isObjectId && { _id: id }) }],
-    });
+    let queryConditions = [{ id: id }, { utr: id }];
+    if (/^[0-9a-fA-F]{24}$/.test(id)) {
+      queryConditions.push({ _id: id });
+    }
+    const deposit = await Deposit.findOne({ $or: queryConditions });
 
     if (!deposit) {
       return res.status(404).json({ success: false, message: 'Deposit record not found.' });
@@ -234,8 +235,28 @@ export const approveDeposit = async (req, res) => {
 
     // Auto credit to trader wallet balance
     const user = await User.findById(deposit.userId);
+    let referralMsg = '';
     if (user) {
       user.balance += deposit.amount;
+
+      // 5% FIRST DEPOSIT REFERRAL COMMISSION
+      if (user.referredBy && !user.firstDepositBonusGiven) {
+        try {
+          const referrer = await User.findById(user.referredBy);
+          if (referrer) {
+            const bonus = Number((deposit.amount * 0.05).toFixed(2));
+            referrer.balance += bonus;
+            referrer.referralEarnings = (referrer.referralEarnings || 0) + bonus;
+            await referrer.save();
+            user.firstDepositBonusGiven = true;
+            referralMsg = ` (🎁 ₹${bonus.toLocaleString('en-IN')} [5%] referral bonus credited to ${referrer.name})`;
+          }
+        } catch (refErr) {
+          console.error('Referral bonus credit error:', refErr);
+        }
+      }
+
+      user.hasDeposited = true;
       await user.save();
     }
 
@@ -250,7 +271,7 @@ export const approveDeposit = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Deposit of ₹${deposit.amount.toLocaleString('en-IN')} approved and credited to ${deposit.traderName}!`,
+      message: `Deposit of ₹${deposit.amount.toLocaleString('en-IN')} approved and credited to ${deposit.traderName}!${referralMsg}`,
       deposit,
       newBalance: user?.balance,
     });
@@ -264,10 +285,11 @@ export const approveDeposit = async (req, res) => {
 export const rejectDeposit = async (req, res) => {
   try {
     const { id } = req.params;
-    const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
-    const deposit = await Deposit.findOne({
-      $or: [{ id }, { ...(isObjectId && { _id: id }) }],
-    });
+    let queryConditions = [{ id: id }, { utr: id }];
+    if (/^[0-9a-fA-F]{24}$/.test(id)) {
+      queryConditions.push({ _id: id });
+    }
+    const deposit = await Deposit.findOne({ $or: queryConditions });
 
     if (!deposit) {
       return res.status(404).json({ success: false, message: 'Deposit record not found.' });
@@ -318,7 +340,30 @@ export const getAllWithdrawals = async (req, res) => {
 
     const withdrawals = await Withdrawal.find(query).sort({ createdAt: -1 });
 
-    return res.status(200).json({ success: true, count: withdrawals.length, withdrawals });
+    const processedWithdrawals = withdrawals.map((w) => {
+      const doc = w.toObject ? w.toObject() : { ...w };
+      if (!doc.payoutQrCode) {
+        const targetUpi = (doc.upiId || '').trim();
+        const targetAcc = (doc.accountNumber || '').trim();
+        const targetIfsc = (doc.ifsc || '').trim();
+        const payee = encodeURIComponent(doc.traderName || 'Trader');
+        const amt = Number(doc.amount || 0);
+
+        let upiString = '';
+        if (targetUpi) {
+          upiString = `upi://pay?pa=${targetUpi}&pn=${payee}&am=${amt}&cu=INR&tn=${encodeURIComponent(`Payout ${doc.traderUid || doc.id}`)}`;
+        } else if (targetAcc && targetIfsc) {
+          upiString = `upi://pay?pa=${targetAcc}@${targetIfsc}.ifsc.npci&pn=${payee}&am=${amt}&cu=INR&tn=${encodeURIComponent(`Bank Payout ${doc.id}`)}`;
+        } else {
+          upiString = `upi://pay?pn=${payee}&am=${amt}&cu=INR`;
+        }
+        doc.payoutQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(upiString)}`;
+        doc.payoutUpiString = upiString;
+      }
+      return doc;
+    });
+
+    return res.status(200).json({ success: true, count: processedWithdrawals.length, withdrawals: processedWithdrawals });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
   }
@@ -329,7 +374,11 @@ export const getAllWithdrawals = async (req, res) => {
 export const releaseWithdrawal = async (req, res) => {
   try {
     const { id } = req.params;
-    const withdrawal = await Withdrawal.findOne({ id });
+    let queryConditions = [{ id: id }];
+    if (/^[0-9a-fA-F]{24}$/.test(id)) {
+      queryConditions.push({ _id: id });
+    }
+    const withdrawal = await Withdrawal.findOne({ $or: queryConditions });
 
     if (!withdrawal) {
       return res.status(404).json({ success: false, message: 'Withdrawal not found.' });
@@ -339,7 +388,7 @@ export const releaseWithdrawal = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Withdrawal is already completed.' });
     }
 
-    const generatedImps = `IMPS${Date.now().toString().slice(-8)}`;
+    const generatedImps = req.body?.impsRef || `IMPS${Date.now().toString().slice(-8)}`;
     withdrawal.status = 'Completed';
     withdrawal.impsRef = generatedImps;
     await withdrawal.save();
@@ -359,7 +408,11 @@ export const releaseWithdrawal = async (req, res) => {
 export const rejectWithdrawal = async (req, res) => {
   try {
     const { id } = req.params;
-    const withdrawal = await Withdrawal.findOne({ id });
+    let queryConditions = [{ id: id }];
+    if (/^[0-9a-fA-F]{24}$/.test(id)) {
+      queryConditions.push({ _id: id });
+    }
+    const withdrawal = await Withdrawal.findOne({ $or: queryConditions });
 
     if (!withdrawal) {
       return res.status(404).json({ success: false, message: 'Withdrawal not found.' });
@@ -393,8 +446,8 @@ export const updateEngineRate = async (req, res) => {
     const { rate } = req.body;
     const numRate = Number(rate);
 
-    if (!numRate || numRate < 1 || numRate > 500) {
-      return res.status(400).json({ success: false, message: 'Invalid rate percentage.' });
+    if (!numRate || numRate < 2 || numRate > 12) {
+      return res.status(400).json({ success: false, message: 'Return rate must be between 2% and 12%.' });
     }
 
     let settings = await Setting.findOne({ key: 'main_config' });

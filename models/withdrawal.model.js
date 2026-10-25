@@ -24,11 +24,11 @@ const withdrawalSchema = new mongoose.Schema(
     amount: {
       type: Number,
       required: true,
-      min: 500,
+      min: 100,
     },
     destinationType: {
       type: String,
-      enum: ['UPI', 'Bank A/C'],
+      enum: ['UPI', 'Bank A/C', 'BANK'],
       default: 'UPI',
     },
     upiId: {
@@ -44,6 +44,18 @@ const withdrawalSchema = new mongoose.Schema(
       default: '',
     },
     ifsc: {
+      type: String,
+      default: '',
+    },
+    accountHolder: {
+      type: String,
+      default: '',
+    },
+    payoutQrCode: {
+      type: String,
+      default: '',
+    },
+    payoutUpiString: {
       type: String,
       default: '',
     },

@@ -2,6 +2,7 @@ import Deposit from '../models/deposit.model.js';
 import Withdrawal from '../models/withdrawal.model.js';
 import User from '../models/user.model.js';
 import Setting from '../models/setting.model.js';
+import StakingRound from '../models/stakingRound.model.js';
 import { verifyBankPayment } from '../utils/paymentVerifier.js';
 
 // @desc    Get user wallet details, deposits, and withdrawals
@@ -23,7 +24,7 @@ export const getWalletHistory = async (req, res) => {
       gatewayConfig: {
         officialUpiId: settings?.officialUpiId || 'paynex.crypto@icici',
         merchantName: settings?.merchantName || 'Paynex Crypto Technologies Pvt Ltd',
-        minDeposit: settings?.minDeposit || 500,
+        minDeposit: settings?.minDeposit || 100,
         minWithdrawal: settings?.minWithdrawal || 1000,
       },
     });
@@ -44,7 +45,7 @@ export const submitDeposit = async (req, res) => {
     }
 
     const settings = await Setting.findOne({ key: 'main_config' });
-    const minDeposit = settings?.minDeposit || 500;
+    const minDeposit = (settings?.minDeposit && Number(settings.minDeposit) <= 100) ? Number(settings.minDeposit) : 100;
     if (Number(amount) < minDeposit) {
       return res.status(400).json({ success: false, message: `Minimum deposit amount is ₹${minDeposit}.` });
     }
@@ -84,7 +85,7 @@ export const submitDeposit = async (req, res) => {
       amount: Number(amount),
       method: method || 'UPI',
       utr: verification.cleanUtr,
-      screenshotProof: screenshotProof || 'paynex_receipt_verified.png',
+      screenshotProof: screenshotProof || req.body.screenshotUrl || 'paynex_receipt_verified.png',
       companyId: companyId || '',
       companyName: companyName || '',
       companyUpi: companyUpi || '',
@@ -140,7 +141,7 @@ export const submitWithdrawal = async (req, res) => {
 
     const numAmount = Number(amount);
     const settings = await Setting.findOne({ key: 'main_config' });
-    const minWithdrawal = settings?.minWithdrawal || 1000;
+    const minWithdrawal = (settings?.minWithdrawal && Number(settings.minWithdrawal) <= 100) ? Number(settings.minWithdrawal) : 100;
 
     if (numAmount < minWithdrawal) {
       return res.status(400).json({ success: false, message: `Minimum withdrawal amount is ₹${minWithdrawal}.` });
@@ -158,16 +159,36 @@ export const submitWithdrawal = async (req, res) => {
     user.balance -= numAmount;
     await user.save();
 
+    // ⚡ Dynamic Payout UPI QR Generation for Admin Scan & Pay
+    const targetUpi = (upiId || user.bankDetails?.upiId || '').trim();
+    const targetAcc = (accountNumber || user.bankDetails?.accountNumber || '').trim();
+    const targetIfsc = (ifsc || user.bankDetails?.ifsc || '').trim();
+    const payeeName = (accountHolder || user.name || 'Trader').trim();
+
+    let payoutUpiString = '';
+    if (targetUpi) {
+      payoutUpiString = `upi://pay?pa=${targetUpi}&pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR&tn=${encodeURIComponent(`Withdrawal ${user.uid}`)}`;
+    } else if (targetAcc && targetIfsc) {
+      payoutUpiString = `upi://pay?pa=${targetAcc}@${targetIfsc}.ifsc.npci&pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR&tn=${encodeURIComponent(`Bank Payout ${user.uid}`)}`;
+    } else {
+      payoutUpiString = `upi://pay?pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR`;
+    }
+
+    const payoutQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payoutUpiString)}`;
+
     const withdrawal = await Withdrawal.create({
       userId,
       traderUid: user.uid,
       traderName: user.name,
       amount: numAmount,
-      destinationType: destinationType || 'UPI',
-      upiId: upiId || user.bankDetails?.upiId || '',
+      destinationType: destinationType || (targetUpi ? 'UPI' : 'Bank A/C'),
+      upiId: targetUpi,
       bankName: bankName || user.bankDetails?.bankName || '',
-      accountNumber: accountNumber || user.bankDetails?.accountNumber || '',
-      ifsc: ifsc || user.bankDetails?.ifsc || '',
+      accountNumber: targetAcc,
+      ifsc: targetIfsc,
+      accountHolder: payeeName,
+      payoutQrCode,
+      payoutUpiString,
       status: 'Pending',
     });
 
@@ -182,3 +203,190 @@ export const submitWithdrawal = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Get real live user notifications generated from real transactions & events
+// @route   GET /api/wallet/notifications
+export const getUserNotifications = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    const [deposits, withdrawals, stakings] = await Promise.all([
+      Deposit.find({ userId }).sort({ createdAt: -1 }).limit(30),
+      Withdrawal.find({ userId }).sort({ createdAt: -1 }).limit(30),
+      StakingRound.find({ userId }).sort({ createdAt: -1 }).limit(30),
+    ]);
+
+    const notifs = [];
+
+    const formatDate = (d) => {
+      if (!d) return 'Recently';
+      const dt = new Date(d);
+      if (isNaN(dt.getTime())) return 'Recently';
+      return dt.toLocaleDateString('en-IN', {
+        day: 'numeric',
+        month: 'short',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
+    };
+
+    // 1. Process Real Deposits
+    for (const dep of deposits) {
+      const depDate = dep.createdAt || new Date();
+      if (dep.status === 'Approved' || dep.status === 'Success') {
+        notifs.push({
+          id: `dep_app_${dep._id}`,
+          title: 'Deposit Approved & Credited',
+          message: `₹${dep.amount.toLocaleString('en-IN')} has been approved and credited to your wallet (UTR: ${dep.utr}).`,
+          date: formatDate(dep.updatedAt || depDate),
+          rawDate: new Date(dep.updatedAt || depDate).getTime(),
+          category: 'deposits',
+          status: 'Approved',
+          icon: 'wallet',
+          iconColor: '0xFF10B981',
+        });
+      } else if (dep.status === 'Rejected' || dep.status === 'Failed') {
+        notifs.push({
+          id: `dep_rej_${dep._id}`,
+          title: 'Deposit Declined',
+          message: `Deposit of ₹${dep.amount.toLocaleString('en-IN')} (UTR: ${dep.utr}) could not be verified on banking switch.`,
+          date: formatDate(dep.updatedAt || depDate),
+          rawDate: new Date(dep.updatedAt || depDate).getTime(),
+          category: 'deposits',
+          status: 'Rejected',
+          icon: 'close',
+          iconColor: '0xFFEF4444',
+        });
+      } else {
+        notifs.push({
+          id: `dep_pen_${dep._id}`,
+          title: 'Deposit Under Review',
+          message: `Deposit of ₹${dep.amount.toLocaleString('en-IN')} (UTR: ${dep.utr}) is queued for automated/admin clearance.`,
+          date: formatDate(depDate),
+          rawDate: new Date(depDate).getTime(),
+          category: 'deposits',
+          status: dep.status || 'Pending',
+          icon: 'time',
+          iconColor: '0xFFF59E0B',
+        });
+      }
+    }
+
+    // 2. Process Real Withdrawals
+    for (const wth of withdrawals) {
+      const wthDate = wth.createdAt || new Date();
+      if (wth.status === 'Completed') {
+        notifs.push({
+          id: `wth_comp_${wth._id}`,
+          title: 'Payout Dispatched via IMPS',
+          message: `₹${wth.amount.toLocaleString('en-IN')} sent to ${wth.destinationType === 'UPI' ? wth.upiId : (wth.accountNumber || 'Bank')}. Ref: ${wth.impsRef || 'IMPS'}`,
+          date: formatDate(wth.updatedAt || wthDate),
+          rawDate: new Date(wth.updatedAt || wthDate).getTime(),
+          category: 'withdrawals',
+          status: 'Completed',
+          icon: 'check',
+          iconColor: '0xFF10B981',
+        });
+      } else if (wth.status === 'Rejected') {
+        notifs.push({
+          id: `wth_rej_${wth._id}`,
+          title: 'Withdrawal Rejected & Refunded',
+          message: `Payout request of ₹${wth.amount.toLocaleString('en-IN')} was declined. ₹${wth.amount.toLocaleString('en-IN')} refunded to wallet.`,
+          date: formatDate(wth.updatedAt || wthDate),
+          rawDate: new Date(wth.updatedAt || wthDate).getTime(),
+          category: 'withdrawals',
+          status: 'Rejected',
+          icon: 'close',
+          iconColor: '0xFFEF4444',
+        });
+      } else {
+        notifs.push({
+          id: `wth_pen_${wth._id}`,
+          title: 'Withdrawal Processing',
+          message: `Payout of ₹${wth.amount.toLocaleString('en-IN')} registered. Awaiting IMPS bank dispatch.`,
+          date: formatDate(wthDate),
+          rawDate: new Date(wthDate).getTime(),
+          category: 'withdrawals',
+          status: 'Pending',
+          icon: 'time',
+          iconColor: '0xFFF59E0B',
+        });
+      }
+    }
+
+    // 3. Process Real Staking Investments
+    for (const stk of stakings) {
+      const stkDate = stk.createdAt || new Date();
+      if (stk.status === 'Matured & Settled') {
+        notifs.push({
+          id: `stk_mat_${stk._id}`,
+          title: `Yield Settled (+${stk.returnPercent}%)`,
+          message: `Stake of ₹${stk.stakedAmount.toLocaleString('en-IN')} on ${stk.asset} completed. ₹${stk.payout.toLocaleString('en-IN')} credited.`,
+          date: formatDate(stk.settledAt || stk.updatedAt || stkDate),
+          rawDate: new Date(stk.settledAt || stk.updatedAt || stkDate).getTime(),
+          category: 'system',
+          status: 'Settled',
+          icon: 'trending',
+          iconColor: '0xFF10B981',
+        });
+      } else if (stk.status === 'Active') {
+        notifs.push({
+          id: `stk_act_${stk._id}`,
+          title: `Staking Active: ${stk.asset}`,
+          message: `₹${stk.stakedAmount.toLocaleString('en-IN')} locked on ${stk.asset} @ ${stk.returnPercent}% fixed return.`,
+          date: formatDate(stkDate),
+          rawDate: new Date(stkDate).getTime(),
+          category: 'system',
+          status: 'Active',
+          icon: 'trending',
+          iconColor: '0xFFF59E0B',
+        });
+      }
+    }
+
+    // 4. Referral bonus notification
+    if (user.referralEarnings && user.referralEarnings > 0) {
+      notifs.push({
+        id: `ref_bonus_${user._id}`,
+        title: 'Referral Bonus Credited',
+        message: `🎁 Total ₹${user.referralEarnings.toLocaleString('en-IN')} in 5% first-deposit referral commission credited to your balance.`,
+        date: formatDate(user.updatedAt || user.createdAt),
+        rawDate: new Date(user.updatedAt || user.createdAt).getTime(),
+        category: 'system',
+        status: 'Credited',
+        icon: 'gift',
+        iconColor: '0xFF10B981',
+      });
+    }
+
+    // 5. Welcome notification
+    notifs.push({
+      id: `welcome_${user._id}`,
+      title: 'Welcome to PAYNEX Trading',
+      message: `Account activated for ${user.name}. Trader UID: ${user.uid}. Minimum deposit ₹100, enjoy 2% to 12% returns!`,
+      date: formatDate(user.createdAt),
+      rawDate: new Date(user.createdAt).getTime(),
+      category: 'system',
+      status: 'Active',
+      icon: 'verified',
+      iconColor: '0xFF38BDF8',
+    });
+
+    // Sort by rawDate descending
+    notifs.sort((a, b) => (b.rawDate || 0) - (a.rawDate || 0));
+
+    return res.status(200).json({
+      success: true,
+      count: notifs.length,
+      notifications: notifs,
+    });
+  } catch (error) {
+    console.error('getUserNotifications error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+

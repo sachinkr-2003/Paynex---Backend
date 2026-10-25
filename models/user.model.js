@@ -67,6 +67,31 @@ const userSchema = new mongoose.Schema(
       holderName: { type: String, default: '' },
       upiId: { type: String, default: 'user@okhdfcbank' },
     },
+    referredBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null,
+    },
+    referrerUid: {
+      type: String,
+      default: null,
+    },
+    hasDeposited: {
+      type: Boolean,
+      default: false,
+    },
+    firstDepositBonusGiven: {
+      type: Boolean,
+      default: false,
+    },
+    referralEarnings: {
+      type: Number,
+      default: 0,
+    },
+    referralCount: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true }
 );

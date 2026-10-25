@@ -21,7 +21,7 @@ const settingSchema = new mongoose.Schema(
     },
     minDeposit: {
       type: Number,
-      default: 500,
+      default: 100, // Starting deposit allowed from ₹100
     },
     minWithdrawal: {
       type: Number,
@@ -33,7 +33,19 @@ const settingSchema = new mongoose.Schema(
     },
     defaultGameProfitPercent: {
       type: Number,
-      default: 30, // 30% Fixed Return Staking Engine
+      default: 5, // Range 2% to 12% max
+    },
+    minProfitPercent: {
+      type: Number,
+      default: 2, // Minimum 2%
+    },
+    maxProfitPercent: {
+      type: Number,
+      default: 12, // Maximum 12%
+    },
+    referralBonusPercent: {
+      type: Number,
+      default: 5, // 5% bonus for referrer on 1st deposit
     },
     reserveBalance: {
       type: Number,

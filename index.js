@@ -53,6 +53,10 @@ app.use('/api/plans', planRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/assets', assetRoutes);
 app.use('/api/gateway', gatewayRoutes);
+app.use('/api/notifications', (req, res, next) => {
+  req.url = '/notifications';
+  walletRoutes(req, res, next);
+});
 
 // Health check endpoint
 app.get('/', (req, res) => {
