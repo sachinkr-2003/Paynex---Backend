@@ -58,8 +58,8 @@ export const submitDeposit = async (req, res) => {
 
     const deposit = await Deposit.create({
       userId,
-      traderUid: user.uid,
-      traderName: user.name,
+      traderUid: user?.uid || 'PAYNEX-USER',
+      traderName: user?.name || 'Trader',
       amount: Number(amount),
       method: method || 'UPI',
       utr: utr.trim(),

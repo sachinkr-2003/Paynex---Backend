@@ -28,8 +28,8 @@ const depositSchema = new mongoose.Schema(
     },
     method: {
       type: String,
-      enum: ['UPI', 'IMPS', 'Bank Transfer', 'QR Code'],
       default: 'UPI',
+      trim: true,
     },
     utr: {
       type: String,
@@ -54,7 +54,7 @@ const depositSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Pending', 'Approved', 'Rejected'],
+      enum: ['Pending', 'Under Review', 'Approved', 'Success', 'Rejected', 'Failed', 'Expired'],
       default: 'Pending',
     },
     time: {

@@ -206,13 +206,16 @@ export const getAllDeposits = async (req, res) => {
 export const approveDeposit = async (req, res) => {
   try {
     const { id } = req.params;
-    const deposit = await Deposit.findOne({ id });
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+    const deposit = await Deposit.findOne({
+      $or: [{ id }, { ...(isObjectId && { _id: id }) }],
+    });
 
     if (!deposit) {
       return res.status(404).json({ success: false, message: 'Deposit record not found.' });
     }
 
-    if (deposit.status === 'Approved') {
+    if (deposit.status === 'Approved' || deposit.status === 'Success') {
       return res.status(400).json({ success: false, message: 'Deposit has already been approved.' });
     }
 
@@ -225,6 +228,15 @@ export const approveDeposit = async (req, res) => {
       user.balance += deposit.amount;
       await user.save();
     }
+
+    // Two-way sync to GatewayOrder
+    try {
+      const GatewayOrder = (await import('../models/gatewayOrder.model.js')).default;
+      await GatewayOrder.findOneAndUpdate(
+        { transactionId: deposit.id },
+        { status: 'Success', verifiedAt: new Date() }
+      );
+    } catch (_) {}
 
     return res.status(200).json({
       success: true,
@@ -242,7 +254,10 @@ export const approveDeposit = async (req, res) => {
 export const rejectDeposit = async (req, res) => {
   try {
     const { id } = req.params;
-    const deposit = await Deposit.findOne({ id });
+    const isObjectId = /^[0-9a-fA-F]{24}$/.test(id);
+    const deposit = await Deposit.findOne({
+      $or: [{ id }, { ...(isObjectId && { _id: id }) }],
+    });
 
     if (!deposit) {
       return res.status(404).json({ success: false, message: 'Deposit record not found.' });
@@ -250,6 +265,15 @@ export const rejectDeposit = async (req, res) => {
 
     deposit.status = 'Rejected';
     await deposit.save();
+
+    // Two-way sync to GatewayOrder
+    try {
+      const GatewayOrder = (await import('../models/gatewayOrder.model.js')).default;
+      await GatewayOrder.findOneAndUpdate(
+        { transactionId: deposit.id },
+        { status: 'Failed', verifiedAt: new Date() }
+      );
+    } catch (_) {}
 
     return res.status(200).json({
       success: true,
