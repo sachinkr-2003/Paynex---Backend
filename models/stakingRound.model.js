@@ -46,6 +46,31 @@ const stakingRoundSchema = new mongoose.Schema(
       type: Number,
       required: true,
     },
+    dailyInterest: {
+      type: Number,
+      default: 0,
+    },
+    totalInterestEarned: {
+      type: Number,
+      default: 0,
+    },
+    daysCredited: {
+      type: Number,
+      default: 0,
+    },
+    lastInterestCreditedAt: {
+      type: Date,
+      default: null,
+    },
+    interestHistory: [
+      {
+        date: { type: Date, default: Date.now },
+        amount: { type: Number, required: true },
+        returnPercent: { type: Number, required: true },
+        balanceAfter: { type: Number },
+        note: { type: String, default: '5:00 AM Daily Interest' },
+      },
+    ],
     durationSeconds: {
       type: Number,
       default: 30,

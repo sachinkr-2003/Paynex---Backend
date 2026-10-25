@@ -4,6 +4,7 @@ import Withdrawal from '../models/withdrawal.model.js';
 import StakingRound from '../models/stakingRound.model.js';
 import Plan from '../models/plan.model.js';
 import Setting from '../models/setting.model.js';
+import { distributeDailyInterest } from '../services/interestScheduler.js';
 
 // @desc    Get complete Master Dashboard KPIs
 // @route   GET /api/admin/dashboard-kpis
@@ -499,3 +500,16 @@ export const updateSettings = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Trigger 5:00 AM Daily Stock Interest Distribution (Manual / Test Trigger)
+// @route   POST /api/admin/distribute-daily-interest
+export const triggerDailyInterest = async (req, res) => {
+  try {
+    const force = req.body?.force === true || req.query?.force === 'true';
+    const result = await distributeDailyInterest({ force });
+    return res.status(200).json(result);
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+

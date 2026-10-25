@@ -46,15 +46,19 @@ export const placeStake = async (req, res) => {
 
     // Look up stock-specific interest rate defined by Admin (clamped strictly 2% - 12%)
     const cleanAsset = asset ? asset.trim() : 'BTC/USDT';
+    const escapedAsset = cleanAsset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const matchedAsset = await Asset.findOne({
-      $or: [{ id: cleanAsset }, { symbol: cleanAsset.toUpperCase() }],
+      $or: [
+        { id: cleanAsset },
+        { symbol: cleanAsset.toUpperCase() },
+        { name: new RegExp(`^${escapedAsset}$`, 'i') },
+      ],
       isEnabled: true,
     });
 
-    const rawReturnRate = matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 5);
+    const rawReturnRate = matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 4);
     const returnRate = Math.min(12, Math.max(2, rawReturnRate));
-    const profit = Math.round((numAmount * returnRate) / 100);
-    const payout = numAmount + profit;
+    const dailyInterest = Math.max(1, Math.round((numAmount * returnRate) / 100));
     const duration = durationSeconds || 30;
 
     // Deduct user balance and increase totalStaked
@@ -66,11 +70,15 @@ export const placeStake = async (req, res) => {
       userId,
       traderUid: user.uid,
       traderName: user.name,
-      asset: asset || 'BTC/USDT',
+      asset: matchedAsset?.name || asset || 'BTC/USDT',
       stakedAmount: numAmount,
       returnPercent: returnRate,
-      profit,
-      payout,
+      dailyInterest,
+      profit: 0,
+      payout: numAmount,
+      totalInterestEarned: 0,
+      daysCredited: 0,
+      lastInterestCreditedAt: null,
       durationSeconds: duration,
       status: 'Active',
       time: 'Just now',

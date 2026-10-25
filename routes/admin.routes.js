@@ -13,6 +13,7 @@ import {
   updateEngineRate,
   getSettings,
   updateSettings,
+  triggerDailyInterest,
 } from '../controllers/admin.controller.js';
 import { protect, adminOnly } from '../middlewares/auth.middleware.js';
 
@@ -36,5 +37,6 @@ router.put('/withdrawals/:id/reject', rejectWithdrawal);
 router.put('/engine/rate', updateEngineRate);
 router.get('/settings', getSettings);
 router.put('/settings', updateSettings);
+router.post('/distribute-daily-interest', triggerDailyInterest);
 
 export default router;

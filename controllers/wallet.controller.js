@@ -334,9 +334,27 @@ export const getUserNotifications = async (req, res) => {
       }
     }
 
-    // 3. Process Real Staking Investments
+    // 3. Process Real Staking Investments & 5:00 AM Daily Interest Credits
     for (const stk of stakings) {
       const stkDate = stk.createdAt || new Date();
+
+      // Show each 5:00 AM Interest Credit Event
+      if (Array.isArray(stk.interestHistory) && stk.interestHistory.length > 0) {
+        for (const [idx, item] of stk.interestHistory.entries()) {
+          notifs.push({
+            id: `stk_int_${stk._id}_${idx}`,
+            title: `⏰ 5:00 AM Interest Credited (+${item.returnPercent || stk.returnPercent}%)`,
+            message: `₹${item.amount.toLocaleString('en-IN')} daily interest on ${stk.asset} has been credited directly to your wallet balance.`,
+            date: formatDate(item.date),
+            rawDate: new Date(item.date).getTime(),
+            category: 'system',
+            status: 'Credited',
+            icon: 'trending',
+            iconColor: '0xFF10B981',
+          });
+        }
+      }
+
       if (stk.status === 'Matured & Settled') {
         notifs.push({
           id: `stk_mat_${stk._id}`,
@@ -350,10 +368,11 @@ export const getUserNotifications = async (req, res) => {
           iconColor: '0xFF10B981',
         });
       } else if (stk.status === 'Active') {
+        const daily = stk.dailyInterest || Math.max(1, Math.round(((stk.stakedAmount || 0) * (stk.returnPercent || 4)) / 100));
         notifs.push({
           id: `stk_act_${stk._id}`,
-          title: `Staking Active: ${stk.asset}`,
-          message: `₹${stk.stakedAmount.toLocaleString('en-IN')} locked on ${stk.asset} @ ${stk.returnPercent}% fixed return.`,
+          title: `Active Stock: ${stk.asset} (+${stk.returnPercent}%)`,
+          message: `₹${stk.stakedAmount.toLocaleString('en-IN')} active on ${stk.asset}. Daily interest of ₹${daily.toLocaleString('en-IN')} auto-credits every morning at 5:00 AM IST.`,
           date: formatDate(stkDate),
           rawDate: new Date(stkDate).getTime(),
           category: 'system',

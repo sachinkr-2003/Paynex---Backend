@@ -15,6 +15,8 @@ import adminRoutes from './routes/admin.routes.js';
 import assetRoutes from './routes/asset.routes.js';
 import gatewayRoutes from './routes/gateway.routes.js';
 
+import { initDailyInterestScheduler } from './services/interestScheduler.js';
+
 dotenv.config();
 
 const app = express();
@@ -24,6 +26,8 @@ const PORT = process.env.PORT || 5000;
 connectDB().then(async () => {
   // Seed initial admin, plans, and demo data
   await seedDatabase();
+  // Initialize 5:00 AM IST Automated Daily Stock Interest Engine
+  initDailyInterestScheduler();
 });
 
 // Middlewares
