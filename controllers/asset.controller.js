@@ -1,14 +1,61 @@
 import Asset from '../models/asset.model.js';
 
-// @desc    Get all enabled stocks / crypto assets for trading portal
+// @desc    Get all stocks / crypto assets for trading portal & user apk (with live isEnabled flag)
 // @route   GET /api/assets
 export const getPublicAssets = async (req, res) => {
   try {
-    const assets = await Asset.find({ isEnabled: true }).sort({ createdAt: 1 });
+    const assets = await Asset.find({}).sort({ createdAt: 1 });
+    const activeAssets = assets.filter((a) => a.isEnabled !== false);
     return res.status(200).json({
       success: true,
       count: assets.length,
+      activeCount: activeAssets.length,
       assets,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Toggle stock / asset active status (Enabled vs Disabled)
+// @route   PUT /api/assets/admin/toggle-status
+export const toggleAssetStatus = async (req, res) => {
+  try {
+    const { id, symbol, _id, isEnabled } = req.body;
+
+    const queryConditions = [];
+    if (_id && /^[0-9a-fA-F]{24}$/.test(_id)) {
+      queryConditions.push({ _id });
+    }
+    if (id) {
+      queryConditions.push({ id });
+      queryConditions.push({ symbol: id.toUpperCase() });
+    }
+    if (symbol) {
+      queryConditions.push({ symbol: symbol.toUpperCase() });
+      queryConditions.push({ id: symbol });
+    }
+
+    if (queryConditions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Asset identifier (id, symbol, or _id) is required.',
+      });
+    }
+
+    let asset = await Asset.findOne({ $or: queryConditions });
+
+    if (!asset) {
+      return res.status(404).json({ success: false, message: 'Stock asset not found.' });
+    }
+
+    asset.isEnabled = Boolean(isEnabled);
+    await asset.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Stock "${asset.name}" (${asset.symbol}) is now ${asset.isEnabled ? 'ACTIVE / ENABLED' : 'DISABLED'}.`,
+      asset,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -133,16 +180,32 @@ export const createAsset = async (req, res) => {
 // @route   PUT /api/admin/assets/:id
 export const updateAsset = async (req, res) => {
   try {
-    const { id } = req.params;
+    const rawId = req.params.id || req.body.id || req.body._id || req.body.symbol;
     const updates = req.body;
 
-    const isHex24 = /^[0-9a-fA-F]{24}$/.test(id);
+    if (!rawId) {
+      return res.status(400).json({ success: false, message: 'Stock identifier is required.' });
+    }
+
+    const decodedId = decodeURIComponent(rawId);
     const queryConditions = [
-      { id: id },
-      { symbol: id.toUpperCase() },
+      { id: decodedId },
+      { id: rawId },
+      { symbol: decodedId.toUpperCase() },
+      { symbol: rawId.toUpperCase() },
     ];
-    if (isHex24) {
-      queryConditions.push({ _id: id });
+
+    if (/^[0-9a-fA-F]{24}$/.test(rawId)) {
+      queryConditions.push({ _id: rawId });
+    }
+    if (updates._id && /^[0-9a-fA-F]{24}$/.test(updates._id)) {
+      queryConditions.push({ _id: updates._id });
+    }
+    if (updates.id) {
+      queryConditions.push({ id: updates.id });
+    }
+    if (updates.symbol) {
+      queryConditions.push({ symbol: updates.symbol.toUpperCase() });
     }
 
     let asset = await Asset.findOne({ $or: queryConditions });
@@ -150,9 +213,9 @@ export const updateAsset = async (req, res) => {
     if (!asset) {
       // Auto-upsert asset so company QR updates are never lost even if newly referenced
       asset = new Asset({
-        id: id,
-        name: updates.name || id,
-        symbol: (updates.symbol || id).toUpperCase(),
+        id: updates.id || decodedId,
+        name: updates.name || decodedId,
+        symbol: (updates.symbol || decodedId).toUpperCase(),
         basePrice: Number(updates.basePrice) || 1000,
         returnPercent: Math.min(12, Math.max(2, Number(updates.returnPercent) || 5)),
         minStake: Math.max(100, Number(updates.minStake) || 100),

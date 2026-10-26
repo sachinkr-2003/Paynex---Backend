@@ -47,15 +47,24 @@ export const placeStake = async (req, res) => {
     // Look up stock-specific interest rate defined by Admin (clamped strictly 2% - 12%)
     const cleanAsset = asset ? asset.trim() : 'BTC/USDT';
     const escapedAsset = cleanAsset.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const matchedAsset = await Asset.findOne({
+    
+    // First check if asset exists in DB and is disabled by Admin
+    const existingAsset = await Asset.findOne({
       $or: [
         { id: cleanAsset },
         { symbol: cleanAsset.toUpperCase() },
         { name: new RegExp(`^${escapedAsset}$`, 'i') },
       ],
-      isEnabled: true,
     });
 
+    if (existingAsset && existingAsset.isEnabled === false) {
+      return res.status(400).json({
+        success: false,
+        message: `Trading on "${existingAsset.name}" is currently disabled by Admin. Please choose another stock.`,
+      });
+    }
+
+    const matchedAsset = existingAsset && existingAsset.isEnabled !== false ? existingAsset : null;
     const rawReturnRate = matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 4);
     const returnRate = Math.min(12, Math.max(2, rawReturnRate));
     const dailyInterest = Math.max(1, Math.round((numAmount * returnRate) / 100));
