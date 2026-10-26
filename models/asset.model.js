@@ -44,9 +44,9 @@ const assetSchema = new mongoose.Schema(
     returnPercent: {
       type: Number,
       required: true,
-      default: 5, // Range 2% to 12% max
-      min: 2,
-      max: 12,
+      default: 5,
+      min: 0,
+      max: 100,
     },
     minStake: {
       type: Number,

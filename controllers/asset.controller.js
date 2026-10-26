@@ -8,9 +8,10 @@ export const getPublicAssets = async (req, res) => {
     const activeAssets = assets.filter((a) => a.isEnabled !== false);
     return res.status(200).json({
       success: true,
-      count: assets.length,
+      count: activeAssets.length,
       activeCount: activeAssets.length,
-      assets,
+      assets: activeAssets,
+      allAssets: assets,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -21,11 +22,21 @@ export const getPublicAssets = async (req, res) => {
 // @route   PUT /api/assets/admin/toggle-status
 export const toggleAssetStatus = async (req, res) => {
   try {
-    const { id, symbol, _id, isEnabled } = req.body;
+    const rawId = req.params.id || req.body.id || req.body.symbol || req.body._id;
+    const { isEnabled, symbol, _id, id } = req.body;
 
     const queryConditions = [];
     if (_id && /^[0-9a-fA-F]{24}$/.test(_id)) {
       queryConditions.push({ _id });
+    }
+    if (rawId && /^[0-9a-fA-F]{24}$/.test(rawId)) {
+      queryConditions.push({ _id: rawId });
+    }
+    if (rawId) {
+      queryConditions.push({ id: rawId });
+      queryConditions.push({ symbol: rawId.toUpperCase() });
+      queryConditions.push({ id: decodeURIComponent(rawId) });
+      queryConditions.push({ symbol: decodeURIComponent(rawId).toUpperCase() });
     }
     if (id) {
       queryConditions.push({ id });
@@ -43,19 +54,20 @@ export const toggleAssetStatus = async (req, res) => {
       });
     }
 
-    let asset = await Asset.findOne({ $or: queryConditions });
+    const updatedAsset = await Asset.findOneAndUpdate(
+      { $or: queryConditions },
+      { $set: { isEnabled: Boolean(isEnabled) } },
+      { new: true, runValidators: false }
+    );
 
-    if (!asset) {
+    if (!updatedAsset) {
       return res.status(404).json({ success: false, message: 'Stock asset not found.' });
     }
 
-    asset.isEnabled = Boolean(isEnabled);
-    await asset.save();
-
     return res.status(200).json({
       success: true,
-      message: `Stock "${asset.name}" (${asset.symbol}) is now ${asset.isEnabled ? 'ACTIVE / ENABLED' : 'DISABLED'}.`,
-      asset,
+      message: `Stock "${updatedAsset.name}" (${updatedAsset.symbol}) is now ${updatedAsset.isEnabled ? 'ACTIVE / ENABLED' : 'DISABLED'}.`,
+      asset: updatedAsset,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -208,41 +220,36 @@ export const updateAsset = async (req, res) => {
       queryConditions.push({ symbol: updates.symbol.toUpperCase() });
     }
 
-    let asset = await Asset.findOne({ $or: queryConditions });
-
-    if (!asset) {
-      // Auto-upsert asset so company QR updates are never lost even if newly referenced
-      asset = new Asset({
-        id: updates.id || decodedId,
-        name: updates.name || decodedId,
-        symbol: (updates.symbol || decodedId).toUpperCase(),
-        basePrice: Number(updates.basePrice) || 1000,
-        returnPercent: Math.min(12, Math.max(2, Number(updates.returnPercent) || 5)),
-        minStake: Math.max(100, Number(updates.minStake) || 100),
-        category: updates.category || 'Stock',
-      });
-    }
-
-    if (updates.name !== undefined) asset.name = updates.name.trim();
-    if (updates.category !== undefined) asset.category = updates.category;
-    if (updates.basePrice !== undefined) asset.basePrice = Number(updates.basePrice);
-    if (updates.step !== undefined) asset.step = Number(updates.step);
-    if (updates.icon !== undefined) asset.icon = updates.icon;
-    if (updates.color !== undefined) asset.color = updates.color;
+    // Build clean update object
+    const updateFields = {};
+    if (updates.name !== undefined) updateFields.name = updates.name.trim();
+    if (updates.category !== undefined) updateFields.category = updates.category;
+    if (updates.basePrice !== undefined) updateFields.basePrice = Number(updates.basePrice);
+    if (updates.step !== undefined) updateFields.step = Number(updates.step);
+    if (updates.icon !== undefined) updateFields.icon = updates.icon;
+    if (updates.color !== undefined) updateFields.color = updates.color;
     if (updates.returnPercent !== undefined) {
-      asset.returnPercent = Math.min(12, Math.max(2, Number(updates.returnPercent)));
+      updateFields.returnPercent = Math.min(100, Math.max(0, Number(updates.returnPercent)));
     }
     if (updates.minStake !== undefined) {
-      asset.minStake = Math.max(100, Number(updates.minStake));
+      updateFields.minStake = Math.max(10, Number(updates.minStake));
     }
-    if (updates.maxStake !== undefined) asset.maxStake = Number(updates.maxStake);
-    if (updates.isEnabled !== undefined) asset.isEnabled = Boolean(updates.isEnabled);
-    if (updates.upiId !== undefined) asset.upiId = updates.upiId.trim();
-    if (updates.qrCode !== undefined) asset.qrCode = updates.qrCode;
-    if (updates.payeeName !== undefined) asset.payeeName = updates.payeeName.trim();
-    if (updates.description !== undefined) asset.description = updates.description;
+    if (updates.maxStake !== undefined) updateFields.maxStake = Number(updates.maxStake);
+    if (updates.isEnabled !== undefined) updateFields.isEnabled = Boolean(updates.isEnabled);
+    if (updates.upiId !== undefined) updateFields.upiId = updates.upiId.trim();
+    if (updates.qrCode !== undefined) updateFields.qrCode = updates.qrCode;
+    if (updates.payeeName !== undefined) updateFields.payeeName = updates.payeeName.trim();
+    if (updates.description !== undefined) updateFields.description = updates.description;
 
-    await asset.save();
+    const asset = await Asset.findOneAndUpdate(
+      { $or: queryConditions },
+      { $set: updateFields },
+      { new: true, upsert: false, runValidators: false }
+    );
+
+    if (!asset) {
+      return res.status(404).json({ success: false, message: 'Stock asset not found.' });
+    }
 
     return res.status(200).json({
       success: true,
