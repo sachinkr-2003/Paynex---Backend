@@ -188,7 +188,7 @@ export const submitWithdrawal = async (req, res) => {
     user.balance -= numAmount;
     await user.save();
 
-    // ⚡ Dynamic Payout Bank QR Generation for Admin Scan & Pay
+    // Dynamic Payout Bank QR Generation for Admin Scan & Pay
     const payoutUpiString = `upi://pay?pa=${targetAcc}@${targetIfsc}.ifsc.npci&pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR&tn=${encodeURIComponent(`Bank Payout ${user.uid}`)}`;
     const payoutQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payoutUpiString)}`;
 
@@ -343,7 +343,7 @@ export const getUserNotifications = async (req, res) => {
         for (const [idx, item] of stk.interestHistory.entries()) {
           notifs.push({
             id: `stk_int_${stk._id}_${idx}`,
-            title: `⏰ 5:00 AM Interest Credited (+${item.returnPercent || stk.returnPercent}%)`,
+            title: `5:00 AM Interest Credited (+${item.returnPercent || stk.returnPercent}%)`,
             message: `₹${item.amount.toLocaleString('en-IN')} daily interest on ${stk.asset} has been credited directly to your wallet balance.`,
             date: formatDate(item.date),
             rawDate: new Date(item.date).getTime(),
@@ -388,7 +388,7 @@ export const getUserNotifications = async (req, res) => {
       notifs.push({
         id: `ref_bonus_${user._id}`,
         title: 'Referral Bonus Credited',
-        message: `🎁 Total ₹${user.referralEarnings.toLocaleString('en-IN')} in 5% first-deposit referral commission credited to your balance.`,
+        message: `Total ₹${user.referralEarnings.toLocaleString('en-IN')} in 5% first-deposit referral commission credited to your balance.`,
         date: formatDate(user.updatedAt || user.createdAt),
         rawDate: new Date(user.updatedAt || user.createdAt).getTime(),
         category: 'system',
