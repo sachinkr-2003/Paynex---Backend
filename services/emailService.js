@@ -96,7 +96,7 @@ export async function sendPasswordResetOtpEmail(toEmail, userName, otp) {
         </p>
 
         <div class="footer">
-          © 2026 PAYNEX CRYPTO EXCHANGE LTD. All rights reserved.
+          © 2018 - 2026 PAYNEX CRYPTO EXCHANGE LTD. All rights reserved.
         </div>
       </div>
     </body>
