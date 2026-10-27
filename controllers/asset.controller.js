@@ -251,6 +251,14 @@ export const updateAsset = async (req, res) => {
     const rawId = req.params.id || req.body.id || req.body._id || req.body.symbol;
     const updates = req.body;
 
+    // Route alias safeguards
+    if (rawId === 'bulk-group-qr' || req.params?.id === 'bulk-group-qr') {
+      return updateGroupQr(req, res);
+    }
+    if (rawId === 'toggle-status' || req.params?.id === 'toggle-status') {
+      return toggleAssetStatus(req, res);
+    }
+
     if (!rawId) {
       return res.status(400).json({ success: false, message: 'Stock identifier is required.' });
     }
