@@ -47,6 +47,10 @@ const settingSchema = new mongoose.Schema(
       type: Number,
       default: 5, // 5% bonus for referrer on 1st deposit
     },
+    groupQrs: {
+      type: Object,
+      default: { 1: '', 2: '', 3: '', 4: '', 5: '' },
+    },
     reserveBalance: {
       type: Number,
       default: 12500000,

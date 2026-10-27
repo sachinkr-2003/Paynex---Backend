@@ -60,6 +60,12 @@ const assetSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+    group: {
+      type: Number,
+      default: 1,
+      min: 1,
+      max: 5,
+    },
     upiId: {
       type: String,
       default: '',

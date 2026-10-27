@@ -1,17 +1,51 @@
 import Asset from '../models/asset.model.js';
+import Setting from '../models/setting.model.js';
+
+export const G1 = ['TATAMOTORS', 'RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK', 'SBIN', 'ITC', 'LT', 'BHARTIARTL', 'HINDUNILVR', 'AXISBANK'];
+export const G2 = ['KOTAKBANK', 'BAJFINANCE', 'MARUTI', 'SUNPHARMA', 'ADANIENT', 'ADANIPORTS', 'TATASTEEL', 'TITAN', 'ASIANPAINT', 'NTPC', 'POWERGRID', 'COALINDIA'];
+export const G3 = ['M&M', 'MM', 'WIPRO', 'ULTRACEMCO', 'BAJAJFINSV', 'ONGC', 'NESTLEIND', 'JSWSTEEL', 'TECHM', 'INDUSINDBK', 'TATACONSUM', 'HINDALCO', 'CIPLA'];
+export const G4 = ['DRREDDY', 'GRASIM', 'SBILIFE', 'HDFCLIFE', 'APOLLOHOSP', 'EICHERMOT', 'DIVISLAB', 'HEROMOTOCO', 'BAJAJ-AUTO', 'BRITANNIA', 'BPCL', 'ZOMATO'];
+export const G5 = ['JIOFIN', 'PAYTM', 'AAPL', 'TSLA', 'NVDA', 'MSFT', 'BTC/USDT', 'BTC', 'ETH/USDT', 'ETH', 'SOL/USDT', 'SOL', 'BNB/USDT', 'BNB', 'GOLD/INR', 'GOLD', 'SILVER/INR', 'SILVER'];
+
+export const getAssetGroup = (asset, index = 0) => {
+  if (asset?.group && Number(asset.group) >= 1 && Number(asset.group) <= 5) {
+    return Number(asset.group);
+  }
+  const sym = (asset?.symbol || asset?.id || '').toUpperCase();
+  if (G1.includes(sym)) return 1;
+  if (G2.includes(sym)) return 2;
+  if (G3.includes(sym)) return 3;
+  if (G4.includes(sym)) return 4;
+  if (G5.includes(sym)) return 5;
+  return Math.min(5, Math.floor(index / 12) + 1);
+};
 
 // @desc    Get all stocks / crypto assets for trading portal & user apk (with live isEnabled flag)
 // @route   GET /api/assets
 export const getPublicAssets = async (req, res) => {
   try {
-    const assets = await Asset.find({}).sort({ createdAt: 1 });
-    const activeAssets = assets.filter((a) => a.isEnabled !== false);
+    const [assets, setting] = await Promise.all([
+      Asset.find({}).sort({ createdAt: 1 }),
+      Setting.findOne({ key: 'main_config' }),
+    ]);
+    const groupQrs = setting?.groupQrs || {};
+    const mappedAssets = assets.map((a, idx) => {
+      const grp = a.group || getAssetGroup(a, idx);
+      const effectiveQr = a.qrCode || groupQrs[grp] || '';
+      return {
+        ...a.toObject(),
+        group: grp,
+        qrCode: effectiveQr,
+      };
+    });
+    const activeAssets = mappedAssets.filter((a) => a.isEnabled !== false);
     return res.status(200).json({
       success: true,
       count: activeAssets.length,
       activeCount: activeAssets.length,
       assets: activeAssets,
-      allAssets: assets,
+      allAssets: mappedAssets,
+      groupQrs,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -93,7 +127,20 @@ export const getAdminAssets = async (req, res) => {
       ];
     }
 
-    const assets = await Asset.find(query).sort({ createdAt: -1 });
+    const [assets, setting] = await Promise.all([
+      Asset.find(query).sort({ createdAt: -1 }),
+      Setting.findOne({ key: 'main_config' }),
+    ]);
+    const groupQrs = setting?.groupQrs || {};
+    const mappedAssets = assets.map((a, idx) => {
+      const grp = a.group || getAssetGroup(a, idx);
+      const effectiveQr = a.qrCode || groupQrs[grp] || '';
+      return {
+        ...a.toObject(),
+        group: grp,
+        qrCode: effectiveQr,
+      };
+    });
 
     const totalCount = await Asset.countDocuments();
     const activeCount = await Asset.countDocuments({ isEnabled: true });
@@ -103,7 +150,8 @@ export const getAdminAssets = async (req, res) => {
     return res.status(200).json({
       success: true,
       stats: { totalCount, activeCount, stockCount, cryptoCount },
-      assets,
+      assets: mappedAssets,
+      groupQrs,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -176,6 +224,7 @@ export const createAsset = async (req, res) => {
       qrCode: qrCode || '',
       payeeName: (payeeName || `${cleanName} Desk`).trim(),
       description: description || '',
+      group: Math.min(5, Math.max(1, Number(req.body.group) || getAssetGroup({ symbol: cleanSym }))),
     });
 
     return res.status(201).json({
@@ -240,6 +289,7 @@ export const updateAsset = async (req, res) => {
     if (updates.qrCode !== undefined) updateFields.qrCode = updates.qrCode;
     if (updates.payeeName !== undefined) updateFields.payeeName = updates.payeeName.trim();
     if (updates.description !== undefined) updateFields.description = updates.description;
+    if (updates.group !== undefined) updateFields.group = Math.min(5, Math.max(1, Number(updates.group) || 1));
 
     const asset = await Asset.findOneAndUpdate(
       { $or: queryConditions },
@@ -285,6 +335,56 @@ export const deleteAsset = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: `Stock "${asset.name}" has been removed from system.`,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Bulk Update QR code for an entire group of companies (Groups 1 to 5)
+// @route   PUT /api/admin/assets/bulk-group-qr
+export const updateGroupQr = async (req, res) => {
+  try {
+    const { group, qrCode } = req.body;
+    const numGroup = Math.min(5, Math.max(1, Number(group) || 1));
+    const cleanQr = (qrCode || '').trim();
+
+    const groupsList = [G1, G2, G3, G4, G5];
+    const targetSymbols = groupsList[numGroup - 1] || [];
+
+    // 1. Update all assets belonging to this group in MongoDB
+    const result = await Asset.updateMany(
+      {
+        $or: [
+          { group: numGroup },
+          { symbol: { $in: targetSymbols } },
+          { id: { $in: targetSymbols } },
+        ],
+      },
+      {
+        $set: {
+          qrCode: cleanQr,
+          group: numGroup,
+        },
+      }
+    );
+
+    // 2. Also save into Setting main_config
+    let setting = await Setting.findOne({ key: 'main_config' });
+    if (setting) {
+      if (!setting.groupQrs) setting.groupQrs = { 1: '', 2: '', 3: '', 4: '', 5: '' };
+      setting.groupQrs[numGroup] = cleanQr;
+      setting.markModified('groupQrs');
+      await setting.save();
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: `Group ${numGroup} payment QR updated for all companies in Group ${numGroup}!`,
+      group: numGroup,
+      qrCode: cleanQr,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

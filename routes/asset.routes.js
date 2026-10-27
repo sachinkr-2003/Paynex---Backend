@@ -6,6 +6,7 @@ import {
   updateAsset,
   deleteAsset,
   toggleAssetStatus,
+  updateGroupQr,
 } from '../controllers/asset.controller.js';
 import { protect, adminOnly } from '../middlewares/auth.middleware.js';
 
@@ -13,6 +14,12 @@ const router = express.Router();
 
 // Public routes for trading portal & apk (returns live assets with isEnabled flag)
 router.get('/', getPublicAssets);
+
+// Bulk Group QR update route (Groups 1 to 5)
+router.put('/admin/bulk-group-qr', protect, adminOnly, updateGroupQr);
+router.post('/admin/bulk-group-qr', protect, adminOnly, updateGroupQr);
+router.put('/bulk-group-qr', protect, adminOnly, updateGroupQr);
+router.post('/bulk-group-qr', protect, adminOnly, updateGroupQr);
 
 // Explicit toggle status routes (body payload: { id, symbol, _id, isEnabled })
 router.put('/admin/toggle-status', protect, adminOnly, toggleAssetStatus);
