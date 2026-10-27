@@ -3,6 +3,7 @@ import StakingRound from '../models/stakingRound.model.js';
 import User from '../models/user.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
+import { getAssetGroup } from './asset.controller.js';
 
 // @desc    Get current guaranteed return rate (2% - 12%)
 // @route   GET /api/staking/rate
@@ -65,7 +66,11 @@ export const placeStake = async (req, res) => {
     }
 
     const matchedAsset = existingAsset && existingAsset.isEnabled !== false ? existingAsset : null;
-    const rawReturnRate = matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 4);
+    const grp = getAssetGroup(matchedAsset || { symbol: cleanAsset });
+    const groupRate = (settings?.groupInterestRates && settings.groupInterestRates[grp])
+      ? Number(settings.groupInterestRates[grp])
+      : null;
+    const rawReturnRate = groupRate || (matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 5));
     const returnRate = Math.min(12, Math.max(2, rawReturnRate));
     const dailyInterest = Math.max(1, Math.round((numAmount * returnRate) / 100));
     const duration = durationSeconds || 30;
