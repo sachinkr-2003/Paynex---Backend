@@ -4,6 +4,8 @@ import Withdrawal from '../models/withdrawal.model.js';
 import StakingRound from '../models/stakingRound.model.js';
 import Plan from '../models/plan.model.js';
 import Setting from '../models/setting.model.js';
+import Asset from '../models/asset.model.js';
+import { G1, G2, G3, G4, G5 } from './asset.controller.js';
 import { distributeDailyInterest } from '../services/interestScheduler.js';
 
 // @desc    Get complete Master Dashboard KPIs
@@ -444,12 +446,9 @@ export const rejectWithdrawal = async (req, res) => {
 // @route   PUT /api/admin/engine/rate
 export const updateEngineRate = async (req, res) => {
   try {
-    const { rate } = req.body;
-    const numRate = Number(rate);
-
-    if (!numRate || numRate < 2 || numRate > 12) {
-      return res.status(400).json({ success: false, message: 'Return rate must be between 2% and 12%.' });
-    }
+    const { rate, profitPercent } = req.body;
+    const rawNum = Number(rate ?? profitPercent);
+    const numRate = Math.min(12, Math.max(2, rawNum || 12));
 
     let settings = await Setting.findOne({ key: 'main_config' });
     if (!settings) {
@@ -459,10 +458,14 @@ export const updateEngineRate = async (req, res) => {
       await settings.save();
     }
 
+    // Also update all assets in MongoDB so they inherit the new Admin rate immediately
+    await Asset.updateMany({}, { $set: { returnPercent: numRate } });
+
     return res.status(200).json({
       success: true,
       message: `⚡ Staking Return Engine rate updated to +${numRate}% Guaranteed!`,
       rate: numRate,
+      returnPercent: numRate,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -490,6 +493,26 @@ export const updateSettings = async (req, res) => {
       new: true,
       upsert: true,
     });
+
+    // If defaultGameProfitPercent updated, sync all assets in MongoDB
+    if (updates.defaultGameProfitPercent) {
+      const cleanRate = Math.min(12, Math.max(2, Number(updates.defaultGameProfitPercent) || 12));
+      await Asset.updateMany({}, { $set: { returnPercent: cleanRate } });
+    }
+
+    // If groupInterestRates updated, sync group assets in MongoDB
+    if (updates.groupInterestRates && typeof updates.groupInterestRates === 'object') {
+      const groupsList = [G1, G2, G3, G4, G5];
+      for (const [grp, val] of Object.entries(updates.groupInterestRates)) {
+        const gNum = Number(grp);
+        const cleanRate = Math.min(12, Math.max(2, Number(val) || 5));
+        const syms = groupsList[gNum - 1] || [];
+        await Asset.updateMany(
+          { $or: [{ group: gNum }, { symbol: { $in: syms } }, { id: { $in: syms } }] },
+          { $set: { returnPercent: cleanRate, group: gNum } }
+        );
+      }
+    }
 
     return res.status(200).json({
       success: true,

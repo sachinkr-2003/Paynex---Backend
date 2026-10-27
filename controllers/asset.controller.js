@@ -31,22 +31,33 @@ export const getPublicAssets = async (req, res) => {
       Asset.find({}).sort({ createdAt: 1 }),
       Setting.findOne({ key: 'main_config' }),
     ]);
+    const masterEngineRate = Math.min(12, Math.max(2, Number(setting?.defaultGameProfitPercent) || 12));
     const groupQrs = setting?.groupQrs || {};
+    const settingGroupRates = setting?.groupInterestRates || {};
     const groupInterestRates = {
-      ...DEFAULT_GROUP_INTEREST,
-      ...(setting?.groupInterestRates || {}),
+      1: masterEngineRate,
+      2: masterEngineRate,
+      3: masterEngineRate,
+      4: masterEngineRate,
+      5: masterEngineRate,
+      ...(typeof settingGroupRates === 'object' ? settingGroupRates : {}),
     };
+
     const mappedAssets = assets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
       // Group QR is authoritative when set
       const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
         ? groupQrs[grp].trim()
         : (a.qrCode || '');
-      // Group Interest Rate is 100% authoritative: all companies in the same group share the exact same uniform rate
-      const rawRate = (groupInterestRates && groupInterestRates[grp] !== undefined && groupInterestRates[grp] !== null)
-        ? Number(groupInterestRates[grp])
-        : (DEFAULT_GROUP_INTEREST[grp] || 5);
-      const effectiveRate = Math.min(12, Math.max(2, rawRate));
+      // Admin Full Control: Group Rate > Individual Asset DB Rate > Master Engine Rate
+      const groupRate = settingGroupRates[grp] !== undefined && settingGroupRates[grp] !== null
+        ? Number(settingGroupRates[grp])
+        : null;
+      const assetRate = a.returnPercent !== undefined && a.returnPercent !== null && Number(a.returnPercent) > 0
+        ? Number(a.returnPercent)
+        : null;
+      const effectiveRate = Math.min(12, Math.max(2, groupRate ?? assetRate ?? masterEngineRate));
+
       return {
         ...a.toObject(),
         group: grp,
@@ -63,6 +74,8 @@ export const getPublicAssets = async (req, res) => {
       allAssets: mappedAssets,
       groupQrs,
       groupInterestRates,
+      defaultGameProfitPercent: masterEngineRate,
+      defaultGameProfitPercent: masterEngineRate,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -148,22 +161,33 @@ export const getAdminAssets = async (req, res) => {
       Asset.find(query).sort({ createdAt: -1 }),
       Setting.findOne({ key: 'main_config' }),
     ]);
+    const masterEngineRate = Math.min(12, Math.max(2, Number(setting?.defaultGameProfitPercent) || 12));
     const groupQrs = setting?.groupQrs || {};
+    const settingGroupRates = setting?.groupInterestRates || {};
     const groupInterestRates = {
-      ...DEFAULT_GROUP_INTEREST,
-      ...(setting?.groupInterestRates || {}),
+      1: masterEngineRate,
+      2: masterEngineRate,
+      3: masterEngineRate,
+      4: masterEngineRate,
+      5: masterEngineRate,
+      ...(typeof settingGroupRates === 'object' ? settingGroupRates : {}),
     };
+
     const mappedAssets = assets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
       // Group QR is authoritative when set
       const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
         ? groupQrs[grp].trim()
         : (a.qrCode || '');
-      // Group Interest Rate is 100% authoritative: all companies in the same group share the exact same uniform rate
-      const rawRate = (groupInterestRates && groupInterestRates[grp] !== undefined && groupInterestRates[grp] !== null)
-        ? Number(groupInterestRates[grp])
-        : (DEFAULT_GROUP_INTEREST[grp] || 5);
-      const effectiveRate = Math.min(12, Math.max(2, rawRate));
+      // Admin Full Control: Group Rate > Individual Asset DB Rate > Master Engine Rate
+      const groupRate = settingGroupRates[grp] !== undefined && settingGroupRates[grp] !== null
+        ? Number(settingGroupRates[grp])
+        : null;
+      const assetRate = a.returnPercent !== undefined && a.returnPercent !== null && Number(a.returnPercent) > 0
+        ? Number(a.returnPercent)
+        : null;
+      const effectiveRate = Math.min(12, Math.max(2, groupRate ?? assetRate ?? masterEngineRate));
+
       return {
         ...a.toObject(),
         group: grp,
@@ -183,6 +207,7 @@ export const getAdminAssets = async (req, res) => {
       assets: mappedAssets,
       groupQrs,
       groupInterestRates,
+      defaultGameProfitPercent: masterEngineRate,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
