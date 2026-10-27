@@ -7,6 +7,7 @@ import {
   deleteAsset,
   toggleAssetStatus,
   updateGroupQr,
+  updateGroupInterestRate,
 } from '../controllers/asset.controller.js';
 import { protect, adminOnly } from '../middlewares/auth.middleware.js';
 
@@ -20,6 +21,12 @@ router.put('/admin/bulk-group-qr', protect, adminOnly, updateGroupQr);
 router.post('/admin/bulk-group-qr', protect, adminOnly, updateGroupQr);
 router.put('/bulk-group-qr', protect, adminOnly, updateGroupQr);
 router.post('/bulk-group-qr', protect, adminOnly, updateGroupQr);
+
+// Bulk Group Interest Rate update route (Groups 1 to 5)
+router.put('/admin/bulk-group-interest', protect, adminOnly, updateGroupInterestRate);
+router.post('/admin/bulk-group-interest', protect, adminOnly, updateGroupInterestRate);
+router.put('/bulk-group-interest', protect, adminOnly, updateGroupInterestRate);
+router.post('/bulk-group-interest', protect, adminOnly, updateGroupInterestRate);
 
 // Explicit toggle status routes (body payload: { id, symbol, _id, isEnabled })
 router.put('/admin/toggle-status', protect, adminOnly, toggleAssetStatus);

@@ -30,16 +30,20 @@ export const getPublicAssets = async (req, res) => {
       Setting.findOne({ key: 'main_config' }),
     ]);
     const groupQrs = setting?.groupQrs || {};
+    const groupInterestRates = setting?.groupInterestRates || {};
     const mappedAssets = assets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
       // Group QR is authoritative when set
       const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
         ? groupQrs[grp].trim()
         : (a.qrCode || '');
+      const groupRate = groupInterestRates && groupInterestRates[grp] ? Number(groupInterestRates[grp]) : null;
+      const effectiveRate = groupRate ? groupRate : (a.returnPercent || 5);
       return {
         ...a.toObject(),
         group: grp,
         qrCode: effectiveQr,
+        returnPercent: effectiveRate,
       };
     });
     const activeAssets = mappedAssets.filter((a) => a.isEnabled !== false);
@@ -50,6 +54,7 @@ export const getPublicAssets = async (req, res) => {
       assets: activeAssets,
       allAssets: mappedAssets,
       groupQrs,
+      groupInterestRates,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -136,16 +141,20 @@ export const getAdminAssets = async (req, res) => {
       Setting.findOne({ key: 'main_config' }),
     ]);
     const groupQrs = setting?.groupQrs || {};
+    const groupInterestRates = setting?.groupInterestRates || {};
     const mappedAssets = assets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
       // Group QR is authoritative when set
       const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
         ? groupQrs[grp].trim()
         : (a.qrCode || '');
+      const groupRate = groupInterestRates && groupInterestRates[grp] ? Number(groupInterestRates[grp]) : null;
+      const effectiveRate = groupRate ? groupRate : (a.returnPercent || 5);
       return {
         ...a.toObject(),
         group: grp,
         qrCode: effectiveQr,
+        returnPercent: effectiveRate,
       };
     });
 
@@ -159,6 +168,7 @@ export const getAdminAssets = async (req, res) => {
       stats: { totalCount, activeCount, stockCount, cryptoCount },
       assets: mappedAssets,
       groupQrs,
+      groupInterestRates,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -254,6 +264,9 @@ export const updateAsset = async (req, res) => {
     // Route alias safeguards
     if (rawId === 'bulk-group-qr' || req.params?.id === 'bulk-group-qr') {
       return updateGroupQr(req, res);
+    }
+    if (rawId === 'bulk-group-interest' || req.params?.id === 'bulk-group-interest') {
+      return updateGroupInterestRate(req, res);
     }
     if (rawId === 'toggle-status' || req.params?.id === 'toggle-status') {
       return toggleAssetStatus(req, res);
@@ -438,6 +451,96 @@ export const updateGroupQr = async (req, res) => {
       message: `Group ${numGroup} payment QR updated for all companies in Group ${numGroup}!`,
       group: numGroup,
       qrCode: cleanQr,
+      matchedCount: result.matchedCount,
+      modifiedCount: result.modifiedCount,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Bulk Update Interest Rate (%) for an entire group of companies (Groups 1 to 5)
+// @route   PUT /api/admin/assets/bulk-group-interest
+export const updateGroupInterestRate = async (req, res) => {
+  try {
+    const { group, returnPercent, rate } = req.body;
+    const numGroup = Math.min(5, Math.max(1, Number(group) || 1));
+    const targetRate = Math.min(12, Math.max(2, Number(returnPercent ?? rate) || 5));
+
+    const groupsList = [G1, G2, G3, G4, G5];
+    const targetSymbols = groupsList[numGroup - 1] || [];
+    const targetSymbolsLower = targetSymbols.map((s) => s.toLowerCase());
+
+    // 1. Update all assets belonging to this group in MongoDB
+    const result = await Asset.updateMany(
+      {
+        $or: [
+          { group: numGroup },
+          { symbol: { $in: [...targetSymbols, ...targetSymbolsLower] } },
+          { id: { $in: [...targetSymbols, ...targetSymbolsLower] } },
+        ],
+      },
+      {
+        $set: {
+          returnPercent: targetRate,
+          group: numGroup,
+        },
+      }
+    );
+
+    // 2. Also ensure every symbol in targetSymbols exists with group and returnPercent
+    for (const sym of targetSymbols) {
+      const match = initialAssetsList.find(
+        (it) => it.symbol.toUpperCase() === sym || it.id.toUpperCase() === sym
+      );
+      await Asset.findOneAndUpdate(
+        {
+          $or: [
+            { symbol: sym },
+            { symbol: sym.toLowerCase() },
+            { id: sym },
+            { id: sym.toLowerCase() },
+          ],
+        },
+        {
+          $set: {
+            group: numGroup,
+            returnPercent: targetRate,
+            name: match?.name || sym,
+            symbol: sym,
+            id: sym,
+            category: match?.category || 'Stock',
+            basePrice: match?.basePrice || 1000,
+            step: match?.step || 1.5,
+            icon: match?.icon || 'stock',
+            color: match?.color || '#38bdf8',
+            minStake: match?.minStake || 100,
+            maxStake: match?.maxStake || 500000,
+          },
+        },
+        { upsert: true, new: true }
+      );
+    }
+
+    // 3. Save into Setting main_config
+    let setting = await Setting.findOne({ key: 'main_config' });
+    if (!setting) {
+      setting = new Setting({
+        key: 'main_config',
+        groupInterestRates: { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 },
+      });
+    }
+    if (!setting.groupInterestRates) setting.groupInterestRates = { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 };
+    setting.groupInterestRates[numGroup] = targetRate;
+    setting.markModified('groupInterestRates');
+    await setting.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Group ${numGroup} interest rate updated to +${targetRate}% for all companies in Group ${numGroup}!`,
+      group: numGroup,
+      returnPercent: targetRate,
+      groupInterestRates: setting.groupInterestRates,
       matchedCount: result.matchedCount,
       modifiedCount: result.modifiedCount,
     });

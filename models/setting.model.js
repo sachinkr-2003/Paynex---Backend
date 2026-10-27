@@ -51,6 +51,10 @@ const settingSchema = new mongoose.Schema(
       type: Object,
       default: { 1: '', 2: '', 3: '', 4: '', 5: '' },
     },
+    groupInterestRates: {
+      type: Object,
+      default: { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 },
+    },
     reserveBalance: {
       type: Number,
       default: 12500000,
