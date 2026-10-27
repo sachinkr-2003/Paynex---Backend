@@ -1,5 +1,6 @@
 import Asset from '../models/asset.model.js';
 import Setting from '../models/setting.model.js';
+import { initialAssetsList } from '../utils/initialAssets.js';
 
 export const G1 = ['TATAMOTORS', 'RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBANK', 'SBIN', 'ITC', 'LT', 'BHARTIARTL', 'HINDUNILVR', 'AXISBANK'];
 export const G2 = ['KOTAKBANK', 'BAJFINANCE', 'MARUTI', 'SUNPHARMA', 'ADANIENT', 'ADANIPORTS', 'TATASTEEL', 'TITAN', 'ASIANPAINT', 'NTPC', 'POWERGRID', 'COALINDIA'];
@@ -8,15 +9,15 @@ export const G4 = ['DRREDDY', 'GRASIM', 'SBILIFE', 'HDFCLIFE', 'APOLLOHOSP', 'EI
 export const G5 = ['JIOFIN', 'PAYTM', 'AAPL', 'TSLA', 'NVDA', 'MSFT', 'BTC/USDT', 'BTC', 'ETH/USDT', 'ETH', 'SOL/USDT', 'SOL', 'BNB/USDT', 'BNB', 'GOLD/INR', 'GOLD', 'SILVER/INR', 'SILVER'];
 
 export const getAssetGroup = (asset, index = 0) => {
-  if (asset?.group && Number(asset.group) >= 1 && Number(asset.group) <= 5) {
-    return Number(asset.group);
-  }
   const sym = (asset?.symbol || asset?.id || '').toUpperCase();
   if (G1.includes(sym)) return 1;
   if (G2.includes(sym)) return 2;
   if (G3.includes(sym)) return 3;
   if (G4.includes(sym)) return 4;
   if (G5.includes(sym)) return 5;
+  if (asset?.group && Number(asset.group) >= 1 && Number(asset.group) <= 5) {
+    return Number(asset.group);
+  }
   return Math.min(5, Math.floor(index / 12) + 1);
 };
 
@@ -30,8 +31,11 @@ export const getPublicAssets = async (req, res) => {
     ]);
     const groupQrs = setting?.groupQrs || {};
     const mappedAssets = assets.map((a, idx) => {
-      const grp = a.group || getAssetGroup(a, idx);
-      const effectiveQr = a.qrCode || groupQrs[grp] || '';
+      const grp = getAssetGroup(a, idx);
+      // Group QR is authoritative when set
+      const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
+        ? groupQrs[grp].trim()
+        : (a.qrCode || '');
       return {
         ...a.toObject(),
         group: grp,
@@ -133,8 +137,11 @@ export const getAdminAssets = async (req, res) => {
     ]);
     const groupQrs = setting?.groupQrs || {};
     const mappedAssets = assets.map((a, idx) => {
-      const grp = a.group || getAssetGroup(a, idx);
-      const effectiveQr = a.qrCode || groupQrs[grp] || '';
+      const grp = getAssetGroup(a, idx);
+      // Group QR is authoritative when set
+      const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
+        ? groupQrs[grp].trim()
+        : (a.qrCode || '');
       return {
         ...a.toObject(),
         group: grp,
@@ -351,14 +358,15 @@ export const updateGroupQr = async (req, res) => {
 
     const groupsList = [G1, G2, G3, G4, G5];
     const targetSymbols = groupsList[numGroup - 1] || [];
+    const targetSymbolsLower = targetSymbols.map((s) => s.toLowerCase());
 
     // 1. Update all assets belonging to this group in MongoDB
     const result = await Asset.updateMany(
       {
         $or: [
           { group: numGroup },
-          { symbol: { $in: targetSymbols } },
-          { id: { $in: targetSymbols } },
+          { symbol: { $in: [...targetSymbols, ...targetSymbolsLower] } },
+          { id: { $in: [...targetSymbols, ...targetSymbolsLower] } },
         ],
       },
       {
@@ -369,14 +377,53 @@ export const updateGroupQr = async (req, res) => {
       }
     );
 
-    // 2. Also save into Setting main_config
-    let setting = await Setting.findOne({ key: 'main_config' });
-    if (setting) {
-      if (!setting.groupQrs) setting.groupQrs = { 1: '', 2: '', 3: '', 4: '', 5: '' };
-      setting.groupQrs[numGroup] = cleanQr;
-      setting.markModified('groupQrs');
-      await setting.save();
+    // 2. Also ensure every symbol in targetSymbols exists with group and qrCode
+    for (const sym of targetSymbols) {
+      const match = initialAssetsList.find(
+        (it) => it.symbol.toUpperCase() === sym || it.id.toUpperCase() === sym
+      );
+      await Asset.findOneAndUpdate(
+        {
+          $or: [
+            { symbol: sym },
+            { symbol: sym.toLowerCase() },
+            { id: sym },
+            { id: sym.toLowerCase() },
+          ],
+        },
+        {
+          $set: {
+            group: numGroup,
+            qrCode: cleanQr,
+            name: match?.name || sym,
+            symbol: sym,
+            id: sym,
+            category: match?.category || 'Stock',
+            basePrice: match?.basePrice || 1000,
+            step: match?.step || 1.5,
+            icon: match?.icon || 'stock',
+            color: match?.color || '#38bdf8',
+            returnPercent: match?.returnPercent || 8,
+            minStake: match?.minStake || 100,
+            maxStake: match?.maxStake || 500000,
+          },
+        },
+        { upsert: true, new: true }
+      );
     }
+
+    // 3. Save into Setting main_config
+    let setting = await Setting.findOne({ key: 'main_config' });
+    if (!setting) {
+      setting = new Setting({
+        key: 'main_config',
+        groupQrs: { 1: '', 2: '', 3: '', 4: '', 5: '' },
+      });
+    }
+    if (!setting.groupQrs) setting.groupQrs = { 1: '', 2: '', 3: '', 4: '', 5: '' };
+    setting.groupQrs[numGroup] = cleanQr;
+    setting.markModified('groupQrs');
+    await setting.save();
 
     return res.status(200).json({
       success: true,

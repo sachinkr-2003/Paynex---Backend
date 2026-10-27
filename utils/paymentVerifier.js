@@ -89,7 +89,7 @@ export const verifyBankPayment = async ({ utr, amount, upiId, transactionId }) =
     bankRef: `NPCI-${cleanUtr}`,
     bankSwitch: 'NPCI / UPI Settlement Node',
     creditedAmount: numAmount,
-    merchantUpi: upiId || 'paynex@icici',
+    merchantUpi: upiId || '',
     verifiedAt: new Date(),
     message: `Payment request of ₹${numAmount.toLocaleString('en-IN')} with UTR ${cleanUtr} recorded for verification.`,
   };

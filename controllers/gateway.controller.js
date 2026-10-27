@@ -23,7 +23,8 @@ export const initiateGatewayOrder = async (req, res) => {
     }
 
     // Determine Admin UPI ID & Payee Name
-    let adminUpiId = 'paynex@icici';
+    const settings = await Setting.findOne({ key: 'main_config' });
+    let adminUpiId = settings?.upiId || '';
     let merchantName = 'Paynex Trading Desk';
 
     if (companyId) {
@@ -31,13 +32,8 @@ export const initiateGatewayOrder = async (req, res) => {
         $or: [{ id: companyId }, { symbol: companyId.toUpperCase() }, { _id: companyId.match(/^[0-9a-fA-F]{24}$/) ? companyId : null }],
       });
       if (asset) {
-        adminUpiId = asset.upiId || `${asset.symbol.toLowerCase()}.paynex@icici`;
+        adminUpiId = asset.upiId || settings?.upiId || '';
         merchantName = `${asset.name} Desk`;
-      }
-    } else {
-      const settings = await Setting.findOne({ key: 'main_config' });
-      if (settings?.upiId) {
-        adminUpiId = settings.upiId;
       }
     }
 
