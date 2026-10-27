@@ -261,6 +261,39 @@ export const approveDeposit = async (req, res) => {
 
       user.hasDeposited = true;
       await user.save();
+
+      // Auto-activate real staking contract if deposit was submitted for stock purchase
+      const targetStock = deposit.companyId || deposit.stockSymbol || (deposit.method && deposit.method.includes('Stock Purchase (') ? deposit.method.match(/Stock Purchase \(([^)]+)\)/)?.[1] : null);
+      if (targetStock) {
+        try {
+          const matchedAsset = await Asset.findOne({
+            $or: [{ id: targetStock }, { symbol: targetStock.toUpperCase() }, { name: targetStock }]
+          });
+          const settings = await Setting.findOne({ key: 'main_config' });
+          const returnRate = Math.min(12, Math.max(2, matchedAsset?.returnPercent || settings?.defaultGameProfitPercent || 12));
+          const profit = Math.round((deposit.amount * returnRate) / 100);
+          const payout = deposit.amount + profit;
+          const dailyInterest = Math.max(1, Math.round((deposit.amount * returnRate) / 100));
+
+          await StakingRound.create({
+            userId: user._id,
+            traderUid: user.uid,
+            traderName: user.name,
+            asset: matchedAsset?.symbol || targetStock,
+            stakedAmount: deposit.amount,
+            returnPercent: returnRate,
+            profit,
+            payout,
+            dailyInterest,
+            durationSeconds: 30,
+            status: 'Active',
+            startTime: new Date(),
+          });
+          console.log(`✅ Real payment approved: Auto-activated ${targetStock} contract for ${user.name}`);
+        } catch (stkErr) {
+          console.warn('Auto stock contract activation notice:', stkErr.message);
+        }
+      }
     }
 
     // Two-way sync to GatewayOrder
