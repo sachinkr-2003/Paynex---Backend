@@ -163,11 +163,11 @@ export const submitOrderUtr = async (req, res) => {
 
     const cleanUtr = utr.trim();
 
-    // Strict numeric check (at least 10 to 16 digits, standard Indian UPI is 12 digits)
-    if (!/^\d{10,18}$/.test(cleanUtr)) {
+    // Numeric or alphanumeric UTR check (at least 6 digits/chars)
+    if (cleanUtr.length < 6) {
       return res.status(400).json({
         success: false,
-        message: 'Invalid UTR format. Please enter a valid 12-digit numeric UPI reference number (e.g. 423985123490).',
+        message: 'Invalid UTR format. Please enter a valid UPI reference / UTR number (at least 6 digits).',
       });
     }
 

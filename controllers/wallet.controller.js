@@ -50,46 +50,47 @@ export const submitDeposit = async (req, res) => {
       return res.status(400).json({ success: false, message: `Minimum deposit amount is ₹${minDeposit}.` });
     }
 
-    // Check duplicate UTR
-    const existingUtr = await Deposit.findOne({ utr: utr.trim() });
+    const cleanUtr = utr.trim();
+
+    // Check duplicate UTR within active/verified/approved deposits
+    const existingUtr = await Deposit.findOne({
+      utr: cleanUtr,
+      status: { $in: ['Pending', 'Verified', 'Approved', 'Success'] },
+    });
     if (existingUtr) {
       return res.status(400).json({ success: false, message: 'This UTR has already been submitted for verification.' });
     }
 
-    // ==============================================================
-    // REAL-TIME BANK & NPCI PAYMENT VERIFICATION (IRCTC STYLE)
-    // ==============================================================
+    // Payment Verification
     const verification = await verifyBankPayment({
-      utr: utr.trim(),
+      utr: cleanUtr,
       amount: Number(amount),
       upiId: companyUpi || settings?.officialUpiId,
     });
 
     if (!verification.verified) {
-      // Payment NOT detected on banking rails -> FAIL ON THE SPOT
-      // DO NOT create any deposit record for administration!
       return res.status(400).json({
         success: false,
         failed: true,
-        message: verification.message || 'Payment Verification Failed: Acquiring bank did not confirm inbound credit. Please ensure you have paid via UPI before submitting.',
+        message: verification.message || 'Payment Verification Failed: Please enter a valid payment UTR.',
       });
     }
 
     const user = await User.findById(userId);
 
-    // Create verified deposit record for administration review
+    // Create deposit record for administration review
     const deposit = await Deposit.create({
       userId,
       traderUid: user?.uid || 'PAYNEX-USER',
       traderName: user?.name || 'Trader',
       amount: Number(amount),
-      method: method || 'UPI',
+      method: method || 'UPI QR',
       utr: verification.cleanUtr,
       screenshotProof: screenshotProof || req.body.screenshotUrl || 'paynex_receipt_verified.png',
       companyId: companyId || '',
       companyName: companyName || '',
       companyUpi: companyUpi || '',
-      status: 'Verified',
+      status: 'Pending',
       isRealPaymentVerified: true,
       bankVerifiedAt: new Date(),
       bankReference: verification.bankRef || `NPCI-${verification.cleanUtr}`,
@@ -98,7 +99,7 @@ export const submitDeposit = async (req, res) => {
     return res.status(201).json({
       success: true,
       verified: true,
-      message: 'Real payment verified by banking network! Your payment of ₹' + amount + ' has been confirmed and forwarded to admin for instant credit.',
+      message: `Deposit of ₹${amount} submitted successfully! Your request (UTR: ${cleanUtr}) is queued for instant admin verification.`,
       deposit,
     });
   } catch (error) {
