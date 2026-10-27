@@ -6,6 +6,7 @@ import Plan from '../models/plan.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
 import { initialAssetsList } from './initialAssets.js';
+import { G1, G2, G3, G4, G5, DEFAULT_GROUP_INTEREST } from '../controllers/asset.controller.js';
 
 export const seedDatabase = async () => {
   try {
@@ -20,6 +21,8 @@ export const seedDatabase = async () => {
         minDeposit: 500,
         minWithdrawal: 1000,
         defaultGameProfitPercent: 30,
+        groupInterestRates: DEFAULT_GROUP_INTEREST,
+        groupQrs: { 1: '', 2: '', 3: '', 4: '', 5: '' },
         reserveBalance: 12500000,
         supportHelpline: '1800 234 5678',
         supportEmail: 'support@paynexcrypto.io',
@@ -27,6 +30,13 @@ export const seedDatabase = async () => {
         telegramChannel: 'https://t.me/paynexcrypto_support',
       });
       console.log('✅ Seeded default system settings');
+    } else if (!setting.groupInterestRates || Object.keys(setting.groupInterestRates).length < 5) {
+      setting.groupInterestRates = {
+        ...DEFAULT_GROUP_INTEREST,
+        ...(setting.groupInterestRates || {}),
+      };
+      setting.markModified('groupInterestRates');
+      await setting.save();
     }
 
     // 2. Seed Super Admin
@@ -128,6 +138,28 @@ export const seedDatabase = async () => {
       }
       console.log(`✅ Seeded and synchronized ${initialAssetsList.length} Stock & Crypto game assets with interest rates`);
     }
+
+    // 8. Enforce 100% Uniform Group Interest Rate across all assets in MongoDB
+    const currentRates = {
+      ...DEFAULT_GROUP_INTEREST,
+      ...(setting?.groupInterestRates || {}),
+    };
+    const groupsList = [G1, G2, G3, G4, G5];
+    for (let g = 1; g <= 5; g++) {
+      const gRate = Math.min(12, Math.max(2, Number(currentRates[g]) || DEFAULT_GROUP_INTEREST[g] || 5));
+      const syms = groupsList[g - 1] || [];
+      await Asset.updateMany(
+        {
+          $or: [
+            { group: g },
+            { symbol: { $in: syms } },
+            { id: { $in: syms } },
+          ],
+        },
+        { $set: { returnPercent: gRate, group: g } }
+      );
+    }
+    console.log('✅ Synchronized 100% uniform Group Interest Rates (2%-12%) for all companies');
   } catch (error) {
     console.error('Seeding error:', error.message);
   }

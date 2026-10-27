@@ -8,6 +8,8 @@ export const G3 = ['M&M', 'MM', 'WIPRO', 'ULTRACEMCO', 'BAJAJFINSV', 'ONGC', 'NE
 export const G4 = ['DRREDDY', 'GRASIM', 'SBILIFE', 'HDFCLIFE', 'APOLLOHOSP', 'EICHERMOT', 'DIVISLAB', 'HEROMOTOCO', 'BAJAJ-AUTO', 'BRITANNIA', 'BPCL', 'ZOMATO'];
 export const G5 = ['JIOFIN', 'PAYTM', 'AAPL', 'TSLA', 'NVDA', 'MSFT', 'BTC/USDT', 'BTC', 'ETH/USDT', 'ETH', 'SOL/USDT', 'SOL', 'BNB/USDT', 'BNB', 'GOLD/INR', 'GOLD', 'SILVER/INR', 'SILVER'];
 
+export const DEFAULT_GROUP_INTEREST = { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 };
+
 export const getAssetGroup = (asset, index = 0) => {
   const sym = (asset?.symbol || asset?.id || '').toUpperCase();
   if (G1.includes(sym)) return 1;
@@ -30,15 +32,21 @@ export const getPublicAssets = async (req, res) => {
       Setting.findOne({ key: 'main_config' }),
     ]);
     const groupQrs = setting?.groupQrs || {};
-    const groupInterestRates = setting?.groupInterestRates || {};
+    const groupInterestRates = {
+      ...DEFAULT_GROUP_INTEREST,
+      ...(setting?.groupInterestRates || {}),
+    };
     const mappedAssets = assets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
       // Group QR is authoritative when set
       const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
         ? groupQrs[grp].trim()
         : (a.qrCode || '');
-      const groupRate = groupInterestRates && groupInterestRates[grp] ? Number(groupInterestRates[grp]) : null;
-      const effectiveRate = groupRate ? groupRate : (a.returnPercent || 5);
+      // Group Interest Rate is 100% authoritative: all companies in the same group share the exact same uniform rate
+      const rawRate = (groupInterestRates && groupInterestRates[grp] !== undefined && groupInterestRates[grp] !== null)
+        ? Number(groupInterestRates[grp])
+        : (DEFAULT_GROUP_INTEREST[grp] || 5);
+      const effectiveRate = Math.min(12, Math.max(2, rawRate));
       return {
         ...a.toObject(),
         group: grp,
@@ -141,15 +149,21 @@ export const getAdminAssets = async (req, res) => {
       Setting.findOne({ key: 'main_config' }),
     ]);
     const groupQrs = setting?.groupQrs || {};
-    const groupInterestRates = setting?.groupInterestRates || {};
+    const groupInterestRates = {
+      ...DEFAULT_GROUP_INTEREST,
+      ...(setting?.groupInterestRates || {}),
+    };
     const mappedAssets = assets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
       // Group QR is authoritative when set
       const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
         ? groupQrs[grp].trim()
         : (a.qrCode || '');
-      const groupRate = groupInterestRates && groupInterestRates[grp] ? Number(groupInterestRates[grp]) : null;
-      const effectiveRate = groupRate ? groupRate : (a.returnPercent || 5);
+      // Group Interest Rate is 100% authoritative: all companies in the same group share the exact same uniform rate
+      const rawRate = (groupInterestRates && groupInterestRates[grp] !== undefined && groupInterestRates[grp] !== null)
+        ? Number(groupInterestRates[grp])
+        : (DEFAULT_GROUP_INTEREST[grp] || 5);
+      const effectiveRate = Math.min(12, Math.max(2, rawRate));
       return {
         ...a.toObject(),
         group: grp,
@@ -327,6 +341,19 @@ export const updateAsset = async (req, res) => {
 
     if (!asset) {
       return res.status(404).json({ success: false, message: 'Stock asset not found.' });
+    }
+
+    if (updates.returnPercent !== undefined) {
+      const cleanRate = Math.min(12, Math.max(2, Number(updates.returnPercent)));
+      const targetGrp = asset.group || getAssetGroup(asset);
+      if (targetGrp >= 1 && targetGrp <= 5) {
+        await Asset.updateMany({ group: targetGrp }, { $set: { returnPercent: cleanRate } });
+        await Setting.findOneAndUpdate(
+          { key: 'main_config' },
+          { $set: { [`groupInterestRates.${targetGrp}`]: cleanRate } },
+          { upsert: true }
+        );
+      }
     }
 
     return res.status(200).json({

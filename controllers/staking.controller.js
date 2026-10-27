@@ -65,13 +65,13 @@ export const placeStake = async (req, res) => {
       });
     }
 
+    const DEFAULT_GROUP_INTEREST = { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 };
     const matchedAsset = existingAsset && existingAsset.isEnabled !== false ? existingAsset : null;
     const grp = getAssetGroup(matchedAsset || { symbol: cleanAsset });
-    const groupRate = (settings?.groupInterestRates && settings.groupInterestRates[grp])
+    const rawGroupRate = (settings?.groupInterestRates && settings.groupInterestRates[grp] !== undefined && settings.groupInterestRates[grp] !== null)
       ? Number(settings.groupInterestRates[grp])
-      : null;
-    const rawReturnRate = groupRate || (matchedAsset ? matchedAsset.returnPercent : (settings?.defaultGameProfitPercent || 5));
-    const returnRate = Math.min(12, Math.max(2, rawReturnRate));
+      : (DEFAULT_GROUP_INTEREST[grp] || 5);
+    const returnRate = Math.min(12, Math.max(2, rawGroupRate));
     const dailyInterest = Math.max(1, Math.round((numAmount * returnRate) / 100));
     const duration = durationSeconds || 30;
 
