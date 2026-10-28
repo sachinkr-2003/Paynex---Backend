@@ -80,8 +80,7 @@ export const placeStake = async (req, res) => {
     user.totalStaked += numAmount;
     await user.save();
 
-    const calculatedProfit = Math.round((numAmount * returnRate) / 100);
-    const calculatedPayout = numAmount + calculatedProfit;
+    const dailyInterest = Math.max(1, Math.round((numAmount * returnRate) / 100));
 
     const round = await StakingRound.create({
       userId,
@@ -91,8 +90,8 @@ export const placeStake = async (req, res) => {
       stakedAmount: numAmount,
       returnPercent: returnRate,
       dailyInterest,
-      profit: calculatedProfit,
-      payout: calculatedPayout,
+      profit: 0, // Profit is strictly 0 until 5:00 AM distribution
+      payout: numAmount, // Principal only until 5:00 AM distribution
       totalInterestEarned: 0,
       daysCredited: 0,
       lastInterestCreditedAt: null,
@@ -282,10 +281,14 @@ export const getUserRounds = async (req, res) => {
     const sanitizedRounds = rounds.map((r) => {
       const staked = Number(r.stakedAmount) || 0;
       const rate = Number(r.returnPercent) || 0;
-      const profit = Number(r.profit) > 0 ? Number(r.profit) : Math.round((staked * rate) / 100);
-      const payout = Number(r.payout) > staked ? Number(r.payout) : (staked + profit);
+      const dailyInterest = r.dailyInterest || Math.max(1, Math.round((staked * rate) / 100));
+      // For active contracts: profit is ONLY interest credited so far at 5:00 AM (0 before 5:00 AM)
+      const earned = Number(r.totalInterestEarned || 0);
+      const profit = r.status === 'Active' ? earned : (Number(r.profit) || earned);
+      const payout = staked + profit;
       return {
         ...r.toObject(),
+        dailyInterest,
         profit,
         payout,
       };
@@ -313,10 +316,14 @@ export const getLivePool = async (req, res) => {
     const sanitizedActive = activeRounds.map((r) => {
       const staked = Number(r.stakedAmount) || 0;
       const rate = Number(r.returnPercent) || 0;
-      const profit = Number(r.profit) > 0 ? Number(r.profit) : Math.round((staked * rate) / 100);
-      const payout = Number(r.payout) > staked ? Number(r.payout) : (staked + profit);
+      const dailyInterest = r.dailyInterest || Math.max(1, Math.round((staked * rate) / 100));
+      // For active contracts: profit is ONLY interest credited so far at 5:00 AM (0 before 5:00 AM)
+      const earned = Number(r.totalInterestEarned || 0);
+      const profit = r.status === 'Active' ? earned : (Number(r.profit) || earned);
+      const payout = staked + profit;
       return {
         ...r.toObject(),
+        dailyInterest,
         profit,
         payout,
       };

@@ -139,16 +139,20 @@ export const getAllTraders = async (req, res) => {
 
       const realTotalPayout = userRounds.reduce((sum, r) => {
         const staked = Number(r.stakedAmount) || 0;
-        const rate = Number(r.returnPercent) || 0;
-        const profit = Number(r.profit) > 0 ? Number(r.profit) : Math.round((staked * rate) / 100);
-        const payout = Number(r.payout) > staked ? Number(r.payout) : staked + profit;
-        return sum + payout;
+        const earned = Number(r.totalInterestEarned || 0);
+        const profit = r.status === 'Active' ? earned : (Number(r.profit) || earned);
+        return sum + staked + profit;
+      }, 0);
+
+      const realTotalEarned = userRounds.reduce((sum, r) => {
+        const earned = Number(r.totalInterestEarned || 0);
+        return sum + (r.status === 'Active' ? earned : (Number(r.profit) || earned));
       }, 0);
 
       const totalDeposited = userDeps.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
 
       const finalTotalStaked = realTotalStaked > 0 ? realTotalStaked : (uObj.totalStaked || 0);
-      const finalTotalWon = realTotalPayout > 0 ? realTotalPayout : (uObj.totalWon || 0);
+      const finalTotalWon = realTotalEarned;
 
       // Async update user record in DB if out of sync
       if ((!uObj.totalStaked || uObj.totalStaked === 0) && realTotalStaked > 0) {
@@ -344,9 +348,11 @@ export const approveDeposit = async (req, res) => {
             asset: cleanSym,
             stakedAmount: deposit.amount,
             returnPercent: returnRate,
-            profit,
-            payout,
+            profit: 0, // Profit is strictly 0 until 5:00 AM distribution
+            payout: deposit.amount, // Principal only until 5:00 AM distribution
             dailyInterest,
+            totalInterestEarned: 0,
+            daysCredited: 0,
             durationSeconds: 30,
             status: 'Active',
             startTime: new Date(),
@@ -355,9 +361,8 @@ export const approveDeposit = async (req, res) => {
         } catch (stkErr) {
           console.warn('Auto stock contract activation notice:', stkErr.message);
         }
-        // Since funds were used to buy the stock contract, track in totalStaked & totalWon
+        // Since funds were used to buy the stock contract, track in totalStaked (profit/won credits at 5:00 AM)
         user.totalStaked = (user.totalStaked || 0) + deposit.amount;
-        user.totalWon = (user.totalWon || 0) + payout;
         await user.save();
       } else {
         // Regular wallet recharge: credit to available balance
