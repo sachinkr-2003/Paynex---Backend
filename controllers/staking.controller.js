@@ -28,7 +28,7 @@ export const getReturnRate = async (req, res) => {
 export const placeStake = async (req, res) => {
   try {
     const { asset, amount, durationSeconds } = req.body;
-    const userId = req.user.id;
+    const userId = req.user._id || req.user.id;
 
     const numAmount = Number(amount);
     if (!numAmount || numAmount <= 0) {
@@ -36,8 +36,15 @@ export const placeStake = async (req, res) => {
     }
 
     const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User account not found.' });
+    }
+
     if (user.balance < numAmount) {
-      return res.status(400).json({ success: false, message: 'Insufficient balance to place stake.' });
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient balance to place stake. Available: ₹${Number(user.balance || 0).toLocaleString('en-IN')}, Required: ₹${numAmount.toLocaleString('en-IN')}.`,
+      });
     }
 
     const settings = await Setting.findOne({ key: 'main_config' });
@@ -77,11 +84,11 @@ export const placeStake = async (req, res) => {
 
     // Deduct user balance and increase totalStaked
     user.balance -= numAmount;
-    user.totalStaked += numAmount;
+    user.totalStaked = (user.totalStaked || 0) + numAmount;
     await user.save();
 
     const round = await StakingRound.create({
-      userId,
+      userId: user._id,
       traderUid: user.uid,
       traderName: user.name,
       asset: matchedAsset?.name || asset || 'BTC/USDT',
@@ -154,7 +161,8 @@ export const settleStake = async (req, res) => {
 export const exitStake = async (req, res) => {
   try {
     const { id } = req.params;
-    const userId = req.user.id;
+    const userId = (req.user._id || req.user.id).toString();
+    const traderUid = req.user.uid;
     const query = mongoose.isValidObjectId(id) ? { $or: [{ id }, { _id: id }] } : { id };
     const round = await StakingRound.findOne(query);
 
@@ -163,7 +171,7 @@ export const exitStake = async (req, res) => {
     }
 
     // Verify ownership
-    if (round.userId.toString() !== userId.toString()) {
+    if (round.userId?.toString() !== userId && round.traderUid !== traderUid) {
       return res.status(403).json({ success: false, message: 'Unauthorized to exit this contract.' });
     }
 
@@ -172,7 +180,7 @@ export const exitStake = async (req, res) => {
     }
 
     const refundAmount = Number(round.stakedAmount) || 0;
-    const user = await User.findById(userId);
+    const user = await User.findById(round.userId || userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User account not found.' });
     }
@@ -209,7 +217,8 @@ export const topUpStake = async (req, res) => {
   try {
     const { id } = req.params;
     const { amount } = req.body;
-    const userId = req.user.id;
+    const userId = (req.user._id || req.user.id).toString();
+    const traderUid = req.user.uid;
     const addAmt = Number(amount);
 
     if (!addAmt || addAmt <= 0) {
@@ -223,7 +232,7 @@ export const topUpStake = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Contract not found.' });
     }
 
-    if (round.userId.toString() !== userId.toString()) {
+    if (round.userId?.toString() !== userId && round.traderUid !== traderUid) {
       return res.status(403).json({ success: false, message: 'Unauthorized.' });
     }
 
@@ -231,7 +240,7 @@ export const topUpStake = async (req, res) => {
       return res.status(400).json({ success: false, message: `Contract is ${round.status}. You can only add capital to active contracts.` });
     }
 
-    const user = await User.findById(userId);
+    const user = await User.findById(round.userId || userId);
     if (!user) {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
@@ -273,8 +282,12 @@ export const topUpStake = async (req, res) => {
 // @route   GET /api/staking/my-rounds
 export const getUserRounds = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const rounds = await StakingRound.find({ userId }).sort({ createdAt: -1 });
+    const userId = req.user._id || req.user.id;
+    const traderUid = req.user.uid;
+    const query = traderUid
+      ? { $or: [{ userId }, { traderUid }] }
+      : { userId };
+    const rounds = await StakingRound.find(query).sort({ createdAt: -1 });
 
     const sanitizedRounds = rounds.map((r) => {
       const staked = Number(r.stakedAmount) || 0;
