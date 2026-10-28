@@ -52,4 +52,22 @@ const adminOnly = (req, res, next) => {
   }
 };
 
-export { protect, adminOnly };
+const optionalProtect = async (req, res, next) => {
+  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
+    try {
+      const token = req.headers.authorization.split(' ')[1];
+      const secret = process.env.JWT_SECRET || 'paynex_crypto_jwt_secret_2026_super_secure_key';
+      const decoded = jwt.verify(token, secret);
+      const User = (await import('../models/user.model.js')).default;
+      const userDoc = await User.findById(decoded.id).select('-password');
+      if (userDoc) {
+        req.user = userDoc;
+      } else {
+        req.user = decoded;
+      }
+    } catch (_) {}
+  }
+  return next();
+};
+
+export { protect, adminOnly, optionalProtect };

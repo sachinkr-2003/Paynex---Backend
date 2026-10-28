@@ -15,6 +15,7 @@ import {
   updateSettings,
   triggerDailyInterest,
   adminResetUserPassword,
+  getAdminNotifications,
 } from '../controllers/admin.controller.js';
 import { protect, adminOnly } from '../middlewares/auth.middleware.js';
 
@@ -37,6 +38,7 @@ router.put('/withdrawals/:id/release', releaseWithdrawal);
 router.put('/withdrawals/:id/reject', rejectWithdrawal);
 
 router.put('/engine/rate', updateEngineRate);
+router.get('/notifications', getAdminNotifications);
 router.get('/settings', getSettings);
 router.put('/settings', updateSettings);
 router.post('/distribute-daily-interest', triggerDailyInterest);

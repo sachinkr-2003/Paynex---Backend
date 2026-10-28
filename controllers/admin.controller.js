@@ -103,7 +103,69 @@ export const getAllTraders = async (req, res) => {
       query.isBanned = true;
     }
 
-    const traders = await User.find(query).sort({ createdAt: -1 });
+    const users = await User.find(query).sort({ createdAt: -1 });
+
+    // Aggregate real staking / contract activity and approved deposits per trader
+    const userIds = users.map((u) => u._id);
+    const traderUids = users.map((u) => u.uid).filter(Boolean);
+
+    const [allRounds, allApprovedDeps] = await Promise.all([
+      StakingRound.find({
+        $or: [{ userId: { $in: userIds } }, { traderUid: { $in: traderUids } }],
+      }),
+      Deposit.find({
+        status: 'Approved',
+        $or: [{ userId: { $in: userIds } }, { traderUid: { $in: traderUids } }],
+      }),
+    ]);
+
+    const traders = users.map((user) => {
+      const uObj = user.toObject();
+      const userRounds = allRounds.filter(
+        (r) =>
+          (r.userId && r.userId.toString() === user._id.toString()) ||
+          (r.traderUid && r.traderUid === user.uid)
+      );
+
+      const userDeps = allApprovedDeps.filter(
+        (d) =>
+          (d.userId && d.userId.toString() === user._id.toString()) ||
+          (d.traderUid && d.traderUid === user.uid)
+      );
+
+      const realTotalStaked = userRounds.reduce((sum, r) => sum + (Number(r.stakedAmount) || 0), 0);
+      const activeContracts = userRounds.filter((r) => r.status === 'Active');
+      const inContractAmount = activeContracts.reduce((sum, r) => sum + (Number(r.stakedAmount) || 0), 0);
+
+      const realTotalPayout = userRounds.reduce((sum, r) => {
+        const staked = Number(r.stakedAmount) || 0;
+        const rate = Number(r.returnPercent) || 0;
+        const profit = Number(r.profit) > 0 ? Number(r.profit) : Math.round((staked * rate) / 100);
+        const payout = Number(r.payout) > staked ? Number(r.payout) : staked + profit;
+        return sum + payout;
+      }, 0);
+
+      const totalDeposited = userDeps.reduce((sum, d) => sum + (Number(d.amount) || 0), 0);
+
+      const finalTotalStaked = realTotalStaked > 0 ? realTotalStaked : (uObj.totalStaked || 0);
+      const finalTotalWon = realTotalPayout > 0 ? realTotalPayout : (uObj.totalWon || 0);
+
+      // Async update user record in DB if out of sync
+      if ((!uObj.totalStaked || uObj.totalStaked === 0) && realTotalStaked > 0) {
+        User.updateOne(
+          { _id: user._id },
+          { $set: { totalStaked: finalTotalStaked, totalWon: finalTotalWon } }
+        ).catch(() => {});
+      }
+
+      return {
+        ...uObj,
+        totalStaked: finalTotalStaked,
+        totalWon: finalTotalWon,
+        inContractAmount,
+        totalDeposited,
+      };
+    });
 
     return res.status(200).json({ success: true, count: traders.length, traders });
   } catch (error) {
@@ -293,7 +355,9 @@ export const approveDeposit = async (req, res) => {
         } catch (stkErr) {
           console.warn('Auto stock contract activation notice:', stkErr.message);
         }
-        // Since funds were used to buy the stock contract, do not add to available balance (avoid double balance)
+        // Since funds were used to buy the stock contract, track in totalStaked & totalWon
+        user.totalStaked = (user.totalStaked || 0) + deposit.amount;
+        user.totalWon = (user.totalWon || 0) + payout;
         await user.save();
       } else {
         // Regular wallet recharge: credit to available balance
@@ -620,5 +684,91 @@ export const adminResetUserPassword = async (req, res) => {
     return res.status(500).json({ success: false, message: error.message });
   }
 };
+
+// @desc    Get real-time admin system notifications & alerts
+// @route   GET /api/admin/notifications
+export const getAdminNotifications = async (req, res) => {
+  try {
+    const [pendingDeps, pendingWths, recentRounds, recentUsers] = await Promise.all([
+      Deposit.find({ status: 'Pending' }).sort({ createdAt: -1 }).limit(10),
+      Withdrawal.find({ status: 'Pending' }).sort({ createdAt: -1 }).limit(10),
+      StakingRound.find().sort({ createdAt: -1 }).limit(10),
+      User.find({ role: 'user' }).sort({ createdAt: -1 }).limit(5),
+    ]);
+
+    const notifs = [];
+
+    // 1. Pending Deposits needing admin review
+    for (const d of pendingDeps) {
+      notifs.push({
+        id: `admin_dep_${d._id}`,
+        type: 'deposit',
+        category: 'pending',
+        title: `Pending Deposit: ₹${d.amount.toLocaleString('en-IN')}`,
+        message: `${d.traderName} submitted ₹${d.amount} via UPI (UTR: ${d.utr || 'Pending'}). Awaiting approval.`,
+        amount: d.amount,
+        actionTab: 'deposits',
+        date: d.createdAt,
+        severity: 'warning',
+      });
+    }
+
+    // 2. Pending Withdrawals needing bank dispatch
+    for (const w of pendingWths) {
+      notifs.push({
+        id: `admin_wth_${w._id}`,
+        type: 'withdrawal',
+        category: 'pending',
+        title: `Payout Request: ₹${w.amount.toLocaleString('en-IN')}`,
+        message: `${w.traderName} requested payout of ₹${w.amount} to ${w.destinationType || 'UPI'}.`,
+        amount: w.amount,
+        actionTab: 'withdrawals',
+        date: w.createdAt,
+        severity: 'danger',
+      });
+    }
+
+    // 3. Recent Real Staking Contracts
+    for (const r of recentRounds) {
+      notifs.push({
+        id: `admin_rnd_${r._id}`,
+        type: 'contract',
+        category: 'activity',
+        title: `Contract Placed: ${r.asset}`,
+        message: `${r.traderName} invested ₹${(Number(r.stakedAmount) || 0).toLocaleString('en-IN')} (+${r.returnPercent}% return).`,
+        amount: r.stakedAmount,
+        actionTab: 'dashboard',
+        date: r.createdAt || r.startTime || new Date(),
+        severity: 'info',
+      });
+    }
+
+    // 4. Recent Real Traders
+    for (const u of recentUsers) {
+      notifs.push({
+        id: `admin_usr_${u._id}`,
+        type: 'user',
+        category: 'activity',
+        title: `New Trader: ${u.name}`,
+        message: `${u.name} (UID: ${u.uid}, Phone: ${u.phone}) registered on Paynex.`,
+        actionTab: 'users',
+        date: u.createdAt,
+        severity: 'success',
+      });
+    }
+
+    notifs.sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+    return res.status(200).json({
+      success: true,
+      count: notifs.length,
+      unreadCount: pendingDeps.length + pendingWths.length,
+      notifications: notifs,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 
 

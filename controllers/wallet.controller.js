@@ -225,17 +225,11 @@ export const submitWithdrawal = async (req, res) => {
 // @route   GET /api/wallet/notifications
 export const getUserNotifications = async (req, res) => {
   try {
-    const userId = req.user.id;
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
+    const userId = req.user?.id || req.user?._id;
+    let user = null;
+    if (userId) {
+      user = await User.findById(userId);
     }
-
-    const [deposits, withdrawals, stakings] = await Promise.all([
-      Deposit.find({ userId }).sort({ createdAt: -1 }).limit(30),
-      Withdrawal.find({ userId }).sort({ createdAt: -1 }).limit(30),
-      StakingRound.find({ userId }).sort({ createdAt: -1 }).limit(30),
-    ]);
 
     const notifs = [];
 
@@ -251,166 +245,229 @@ export const getUserNotifications = async (req, res) => {
       });
     };
 
-    // 1. Process Real Deposits
-    for (const dep of deposits) {
-      const depDate = dep.createdAt || new Date();
-      if (dep.status === 'Approved' || dep.status === 'Success') {
-        notifs.push({
-          id: `dep_app_${dep._id}`,
-          title: 'Deposit Approved & Credited',
-          message: `₹${dep.amount.toLocaleString('en-IN')} has been approved and credited to your wallet (UTR: ${dep.utr}).`,
-          date: formatDate(dep.updatedAt || depDate),
-          rawDate: new Date(dep.updatedAt || depDate).getTime(),
-          category: 'deposits',
-          status: 'Approved',
-          icon: 'wallet',
-          iconColor: '0xFF10B981',
-        });
-      } else if (dep.status === 'Rejected' || dep.status === 'Failed') {
-        notifs.push({
-          id: `dep_rej_${dep._id}`,
-          title: 'Deposit Declined',
-          message: `Deposit of ₹${dep.amount.toLocaleString('en-IN')} (UTR: ${dep.utr}) could not be verified on banking switch.`,
-          date: formatDate(dep.updatedAt || depDate),
-          rawDate: new Date(dep.updatedAt || depDate).getTime(),
-          category: 'deposits',
-          status: 'Rejected',
-          icon: 'close',
-          iconColor: '0xFFEF4444',
-        });
-      } else {
-        notifs.push({
-          id: `dep_pen_${dep._id}`,
-          title: 'Deposit Under Review',
-          message: `Deposit of ₹${dep.amount.toLocaleString('en-IN')} (UTR: ${dep.utr}) is queued for automated/admin clearance.`,
-          date: formatDate(depDate),
-          rawDate: new Date(depDate).getTime(),
-          category: 'deposits',
-          status: dep.status || 'Pending',
-          icon: 'time',
-          iconColor: '0xFFF59E0B',
-        });
-      }
-    }
+    if (user) {
+      const userQuery = {
+        $or: [{ userId: user._id }, { traderUid: user.uid }],
+      };
 
-    // 2. Process Real Withdrawals
-    for (const wth of withdrawals) {
-      const wthDate = wth.createdAt || new Date();
-      if (wth.status === 'Completed') {
-        notifs.push({
-          id: `wth_comp_${wth._id}`,
-          title: 'Payout Dispatched via IMPS',
-          message: `₹${wth.amount.toLocaleString('en-IN')} sent to ${wth.destinationType === 'UPI' ? wth.upiId : (wth.accountNumber || 'Bank')}. Ref: ${wth.impsRef || 'IMPS'}`,
-          date: formatDate(wth.updatedAt || wthDate),
-          rawDate: new Date(wth.updatedAt || wthDate).getTime(),
-          category: 'withdrawals',
-          status: 'Completed',
-          icon: 'check',
-          iconColor: '0xFF10B981',
-        });
-      } else if (wth.status === 'Rejected') {
-        notifs.push({
-          id: `wth_rej_${wth._id}`,
-          title: 'Withdrawal Rejected & Refunded',
-          message: `Payout request of ₹${wth.amount.toLocaleString('en-IN')} was declined. ₹${wth.amount.toLocaleString('en-IN')} refunded to wallet.`,
-          date: formatDate(wth.updatedAt || wthDate),
-          rawDate: new Date(wth.updatedAt || wthDate).getTime(),
-          category: 'withdrawals',
-          status: 'Rejected',
-          icon: 'close',
-          iconColor: '0xFFEF4444',
-        });
-      } else {
-        notifs.push({
-          id: `wth_pen_${wth._id}`,
-          title: 'Withdrawal Processing',
-          message: `Payout of ₹${wth.amount.toLocaleString('en-IN')} registered. Awaiting IMPS bank dispatch.`,
-          date: formatDate(wthDate),
-          rawDate: new Date(wthDate).getTime(),
-          category: 'withdrawals',
-          status: 'Pending',
-          icon: 'time',
-          iconColor: '0xFFF59E0B',
-        });
-      }
-    }
+      const [deposits, withdrawals, stakings] = await Promise.all([
+        Deposit.find(userQuery).sort({ createdAt: -1 }).limit(30),
+        Withdrawal.find(userQuery).sort({ createdAt: -1 }).limit(30),
+        StakingRound.find(userQuery).sort({ createdAt: -1 }).limit(30),
+      ]);
 
-    // 3. Process Real Staking Investments & 5:00 AM Daily Interest Credits
-    for (const stk of stakings) {
-      const stkDate = stk.createdAt || new Date();
-
-      // Show each 5:00 AM Interest Credit Event
-      if (Array.isArray(stk.interestHistory) && stk.interestHistory.length > 0) {
-        for (const [idx, item] of stk.interestHistory.entries()) {
+      // 1. Process Real Deposits
+      for (const dep of deposits) {
+        const depDate = dep.createdAt || new Date();
+        if (dep.status === 'Approved' || dep.status === 'Success') {
           notifs.push({
-            id: `stk_int_${stk._id}_${idx}`,
-            title: `5:00 AM Interest Credited (+${item.returnPercent || stk.returnPercent}%)`,
-            message: `₹${item.amount.toLocaleString('en-IN')} daily interest on ${stk.asset} has been credited directly to your wallet balance.`,
-            date: formatDate(item.date),
-            rawDate: new Date(item.date).getTime(),
-            category: 'system',
-            status: 'Credited',
-            icon: 'trending',
+            id: `dep_app_${dep._id}`,
+            title: 'Deposit Approved & Credited',
+            message: `₹${dep.amount.toLocaleString('en-IN')} has been approved and credited to your wallet (UTR: ${dep.utr}).`,
+            date: formatDate(dep.updatedAt || depDate),
+            rawDate: new Date(dep.updatedAt || depDate).getTime(),
+            category: 'deposits',
+            status: 'Approved',
+            icon: 'wallet',
             iconColor: '0xFF10B981',
+          });
+        } else if (dep.status === 'Rejected' || dep.status === 'Failed') {
+          notifs.push({
+            id: `dep_rej_${dep._id}`,
+            title: 'Deposit Declined',
+            message: `Deposit of ₹${dep.amount.toLocaleString('en-IN')} (UTR: ${dep.utr}) could not be verified on banking switch.`,
+            date: formatDate(dep.updatedAt || depDate),
+            rawDate: new Date(dep.updatedAt || depDate).getTime(),
+            category: 'deposits',
+            status: 'Rejected',
+            icon: 'close',
+            iconColor: '0xFFEF4444',
+          });
+        } else {
+          notifs.push({
+            id: `dep_pen_${dep._id}`,
+            title: 'Deposit Under Review',
+            message: `Deposit of ₹${dep.amount.toLocaleString('en-IN')} (UTR: ${dep.utr}) is queued for automated/admin clearance.`,
+            date: formatDate(depDate),
+            rawDate: new Date(depDate).getTime(),
+            category: 'deposits',
+            status: dep.status || 'Pending',
+            icon: 'time',
+            iconColor: '0xFFF59E0B',
           });
         }
       }
 
-      if (stk.status === 'Matured & Settled') {
+      // 2. Process Real Withdrawals
+      for (const wth of withdrawals) {
+        const wthDate = wth.createdAt || new Date();
+        if (wth.status === 'Completed') {
+          notifs.push({
+            id: `wth_comp_${wth._id}`,
+            title: 'Payout Dispatched via IMPS',
+            message: `₹${wth.amount.toLocaleString('en-IN')} sent to ${wth.destinationType === 'UPI' ? wth.upiId : (wth.accountNumber || 'Bank')}. Ref: ${wth.impsRef || 'IMPS'}`,
+            date: formatDate(wth.updatedAt || wthDate),
+            rawDate: new Date(wth.updatedAt || wthDate).getTime(),
+            category: 'withdrawals',
+            status: 'Completed',
+            icon: 'check',
+            iconColor: '0xFF10B981',
+          });
+        } else if (wth.status === 'Rejected') {
+          notifs.push({
+            id: `wth_rej_${wth._id}`,
+            title: 'Withdrawal Rejected & Refunded',
+            message: `Payout request of ₹${wth.amount.toLocaleString('en-IN')} was declined. ₹${wth.amount.toLocaleString('en-IN')} refunded to wallet.`,
+            date: formatDate(wth.updatedAt || wthDate),
+            rawDate: new Date(wth.updatedAt || wthDate).getTime(),
+            category: 'withdrawals',
+            status: 'Rejected',
+            icon: 'close',
+            iconColor: '0xFFEF4444',
+          });
+        } else {
+          notifs.push({
+            id: `wth_pen_${wth._id}`,
+            title: 'Withdrawal Processing',
+            message: `Payout of ₹${wth.amount.toLocaleString('en-IN')} registered. Awaiting IMPS bank dispatch.`,
+            date: formatDate(wthDate),
+            rawDate: new Date(wthDate).getTime(),
+            category: 'withdrawals',
+            status: 'Pending',
+            icon: 'time',
+            iconColor: '0xFFF59E0B',
+          });
+        }
+      }
+
+      // 3. Process Real Staking Investments & 5:00 AM Daily Interest Credits
+      for (const stk of stakings) {
+        const stkDate = stk.createdAt || new Date();
+
+        // Show each 5:00 AM Interest Credit Event
+        if (Array.isArray(stk.interestHistory) && stk.interestHistory.length > 0) {
+          for (const [idx, item] of stk.interestHistory.entries()) {
+            notifs.push({
+              id: `stk_int_${stk._id}_${idx}`,
+              title: `5:00 AM Interest Credited (+${item.returnPercent || stk.returnPercent}%)`,
+              message: `₹${item.amount.toLocaleString('en-IN')} daily interest on ${stk.asset} has been credited directly to your wallet balance.`,
+              date: formatDate(item.date),
+              rawDate: new Date(item.date).getTime(),
+              category: 'system',
+              status: 'Credited',
+              icon: 'trending',
+              iconColor: '0xFF10B981',
+            });
+          }
+        }
+
+        if (stk.status === 'Matured & Settled') {
+          notifs.push({
+            id: `stk_mat_${stk._id}`,
+            title: `Yield Settled (+${stk.returnPercent}%)`,
+            message: `Stake of ₹${stk.stakedAmount.toLocaleString('en-IN')} on ${stk.asset} completed. ₹${stk.payout.toLocaleString('en-IN')} credited.`,
+            date: formatDate(stk.settledAt || stk.updatedAt || stkDate),
+            rawDate: new Date(stk.settledAt || stk.updatedAt || stkDate).getTime(),
+            category: 'system',
+            status: 'Settled',
+            icon: 'trending',
+            iconColor: '0xFF10B981',
+          });
+        } else if (stk.status === 'Active') {
+          const daily = stk.dailyInterest || Math.max(1, Math.round(((stk.stakedAmount || 0) * (stk.returnPercent || 4)) / 100));
+          notifs.push({
+            id: `stk_act_${stk._id}`,
+            title: `Active Stock: ${stk.asset} (+${stk.returnPercent}%)`,
+            message: `₹${stk.stakedAmount.toLocaleString('en-IN')} active on ${stk.asset}. Daily interest of ₹${daily.toLocaleString('en-IN')} auto-credits every morning at 5:00 AM IST.`,
+            date: formatDate(stkDate),
+            rawDate: new Date(stkDate).getTime(),
+            category: 'system',
+            status: 'Active',
+            icon: 'trending',
+            iconColor: '0xFFF59E0B',
+          });
+        }
+      }
+
+      // 4. Referral bonus notification
+      if (user.referralEarnings && user.referralEarnings > 0) {
         notifs.push({
-          id: `stk_mat_${stk._id}`,
-          title: `Yield Settled (+${stk.returnPercent}%)`,
-          message: `Stake of ₹${stk.stakedAmount.toLocaleString('en-IN')} on ${stk.asset} completed. ₹${stk.payout.toLocaleString('en-IN')} credited.`,
-          date: formatDate(stk.settledAt || stk.updatedAt || stkDate),
-          rawDate: new Date(stk.settledAt || stk.updatedAt || stkDate).getTime(),
+          id: `ref_bonus_${user._id}`,
+          title: 'Referral Bonus Credited',
+          message: `Total ₹${user.referralEarnings.toLocaleString('en-IN')} in 5% first-deposit referral commission credited to your balance.`,
+          date: formatDate(user.updatedAt || user.createdAt),
+          rawDate: new Date(user.updatedAt || user.createdAt).getTime(),
           category: 'system',
-          status: 'Settled',
-          icon: 'trending',
+          status: 'Credited',
+          icon: 'gift',
           iconColor: '0xFF10B981',
         });
-      } else if (stk.status === 'Active') {
-        const daily = stk.dailyInterest || Math.max(1, Math.round(((stk.stakedAmount || 0) * (stk.returnPercent || 4)) / 100));
-        notifs.push({
-          id: `stk_act_${stk._id}`,
-          title: `Active Stock: ${stk.asset} (+${stk.returnPercent}%)`,
-          message: `₹${stk.stakedAmount.toLocaleString('en-IN')} active on ${stk.asset}. Daily interest of ₹${daily.toLocaleString('en-IN')} auto-credits every morning at 5:00 AM IST.`,
-          date: formatDate(stkDate),
-          rawDate: new Date(stkDate).getTime(),
-          category: 'system',
-          status: 'Active',
-          icon: 'trending',
-          iconColor: '0xFFF59E0B',
-        });
       }
-    }
 
-    // 4. Referral bonus notification
-    if (user.referralEarnings && user.referralEarnings > 0) {
+      // 5. Welcome notification
       notifs.push({
-        id: `ref_bonus_${user._id}`,
-        title: 'Referral Bonus Credited',
-        message: `Total ₹${user.referralEarnings.toLocaleString('en-IN')} in 5% first-deposit referral commission credited to your balance.`,
-        date: formatDate(user.updatedAt || user.createdAt),
-        rawDate: new Date(user.updatedAt || user.createdAt).getTime(),
+        id: `welcome_${user._id}`,
+        title: 'Welcome to PAYNEX Trading',
+        message: `Account activated for ${user.name}. Trader UID: ${user.uid}. Minimum deposit ₹100, enjoy 2% to 12% returns!`,
+        date: formatDate(user.createdAt),
+        rawDate: new Date(user.createdAt).getTime(),
         category: 'system',
-        status: 'Credited',
-        icon: 'gift',
-        iconColor: '0xFF10B981',
+        status: 'Active',
+        icon: 'verified',
+        iconColor: '0xFF38BDF8',
       });
     }
 
-    // 5. Welcome notification
+    // Official Real Platform Notices & Announcements
     notifs.push({
-      id: `welcome_${user._id}`,
-      title: 'Welcome to PAYNEX Trading',
-      message: `Account activated for ${user.name}. Trader UID: ${user.uid}. Minimum deposit ₹100, enjoy 2% to 12% returns!`,
-      date: formatDate(user.createdAt),
-      rawDate: new Date(user.createdAt).getTime(),
+      id: 'platform_notice_yield_engine',
+      title: '5:00 AM Daily Yield Engine Active',
+      message: 'Guaranteed 2% to 12% fixed returns auto-credit every morning at 5:00 AM IST directly to your available balance.',
+      date: 'Today, 5:00 AM',
+      rawDate: Date.now() - 1000 * 60 * 60,
       category: 'system',
       status: 'Active',
-      icon: 'verified',
+      icon: 'trending',
+      iconColor: '0xFF10B981',
+    });
+
+    notifs.push({
+      id: 'platform_notice_upi_gateway',
+      title: 'Instant UPI Recharges Live',
+      message: 'Seamless PhonePe, Google Pay, Paytm & BHIM deposits enabled with 0% processing fee. Instant payment verification.',
+      date: 'Official Notice',
+      rawDate: Date.now() - 1000 * 60 * 120,
+      category: 'deposits',
+      status: 'Verified',
+      icon: 'wallet',
       iconColor: '0xFF38BDF8',
     });
+
+    notifs.push({
+      id: 'platform_notice_reserves',
+      title: 'Paynex Platform Reserve Backed',
+      message: 'All trader stakes, contracts, and yields are 100% secured by Paynex Platform Treasury Reserves.',
+      date: 'Official Notice',
+      rawDate: Date.now() - 1000 * 60 * 180,
+      category: 'system',
+      status: 'Verified',
+      icon: 'verified',
+      iconColor: '0xFFF59E0B',
+    });
+
+    // Sort by rawDate descending
+    notifs.sort((a, b) => (b.rawDate || 0) - (a.rawDate || 0));
+
+    return res.status(200).json({
+      success: true,
+      count: notifs.length,
+      notifications: notifs,
+    });
+  } catch (error) {
+    console.error('getUserNotifications error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
 
     // Sort by rawDate descending
     notifs.sort((a, b) => (b.rawDate || 0) - (a.rawDate || 0));
