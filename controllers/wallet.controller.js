@@ -469,17 +469,3 @@ export const getUserNotifications = async (req, res) => {
   }
 };
 
-    // Sort by rawDate descending
-    notifs.sort((a, b) => (b.rawDate || 0) - (a.rawDate || 0));
-
-    return res.status(200).json({
-      success: true,
-      count: notifs.length,
-      notifications: notifs,
-    });
-  } catch (error) {
-    console.error('getUserNotifications error:', error);
-    return res.status(500).json({ success: false, message: error.message });
-  }
-};
-

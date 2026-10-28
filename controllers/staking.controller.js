@@ -80,8 +80,6 @@ export const placeStake = async (req, res) => {
     user.totalStaked += numAmount;
     await user.save();
 
-    const dailyInterest = Math.max(1, Math.round((numAmount * returnRate) / 100));
-
     const round = await StakingRound.create({
       userId,
       traderUid: user.uid,
