@@ -62,6 +62,10 @@ const gatewayOrderSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    qrCode: {
+      type: String,
+      default: '',
+    },
     screenshotProof: {
       type: String,
       default: '',

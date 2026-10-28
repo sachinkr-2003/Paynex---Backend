@@ -3,13 +3,14 @@ import Deposit from '../models/deposit.model.js';
 import User from '../models/user.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
+import { getAssetGroup } from './asset.controller.js';
 import { verifyBankPayment } from '../utils/paymentVerifier.js';
 
 // @desc    Initiate new UPI Payment Gateway Order (10-min countdown session)
 // @route   POST /api/gateway/initiate
 export const initiateGatewayOrder = async (req, res) => {
   try {
-    const { amount, companyId, companyName } = req.body;
+    const { amount, companyId, companyName, companyUpi, qrCode } = req.body;
     const userId = req.user.id;
 
     const numAmount = Number(amount);
@@ -22,19 +23,33 @@ export const initiateGatewayOrder = async (req, res) => {
       return res.status(404).json({ success: false, message: 'User not found.' });
     }
 
-    // Determine Admin UPI ID & Payee Name
+    // Determine Admin UPI ID, Payee Name & QR Code
     const settings = await Setting.findOne({ key: 'main_config' });
-    let adminUpiId = settings?.upiId || '';
-    let merchantName = 'Paynex Trading Desk';
+    let adminUpiId = companyUpi || settings?.officialUpiId || settings?.upiId || 'paynex.crypto@icici';
+    let merchantName = companyName || 'Paynex Trading Desk';
+    let orderQrCode = qrCode || '';
 
     if (companyId) {
       const asset = await Asset.findOne({
-        $or: [{ id: companyId }, { symbol: companyId.toUpperCase() }, { _id: companyId.match(/^[0-9a-fA-F]{24}$/) ? companyId : null }],
+        $or: [
+          { id: companyId },
+          { symbol: companyId.toUpperCase() },
+          { _id: companyId.match(/^[0-9a-fA-F]{24}$/) ? companyId : null },
+        ],
       });
       if (asset) {
-        adminUpiId = asset.upiId || settings?.upiId || '';
-        merchantName = `${asset.name} Desk`;
+        adminUpiId = (asset.upiId && asset.upiId.trim()) || companyUpi || settings?.officialUpiId || settings?.upiId || `${asset.symbol.toLowerCase()}.paynex@icici`;
+        merchantName = asset.payeeName || `${asset.name} Desk`;
+        const grp = getAssetGroup(asset);
+        orderQrCode = (settings?.groupQrs && settings.groupQrs[grp] && settings.groupQrs[grp].trim().length > 0)
+          ? settings.groupQrs[grp].trim()
+          : (asset.qrCode || qrCode || '');
       }
+    }
+
+    // Fallback QR if not set
+    if (!orderQrCode && settings?.officialUpiId) {
+      orderQrCode = settings.groupQrs?.[1] || '';
     }
 
     // Generate unique Transaction / Order ID
@@ -66,6 +81,7 @@ export const initiateGatewayOrder = async (req, res) => {
       companyId: companyId || '',
       companyName: companyName || merchantName,
       companyUpi: adminUpiId,
+      qrCode: orderQrCode || '',
       expiresAt,
     });
 
@@ -84,6 +100,7 @@ export const initiateGatewayOrder = async (req, res) => {
         status: order.status,
         companyId: order.companyId,
         companyName: order.companyName,
+        qrCode: order.qrCode || orderQrCode || '',
         expiresAt: order.expiresAt,
         remainingSeconds: 600,
         upiUri,
@@ -132,6 +149,7 @@ export const getGatewayOrder = async (req, res) => {
         status: order.status,
         userUtrNumber: order.userUtrNumber,
         companyName: order.companyName,
+        qrCode: order.qrCode || '',
         expiresAt: order.expiresAt,
         remainingSeconds,
         upiUri: `upi://pay?${baseUpiParams}`,

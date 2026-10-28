@@ -62,6 +62,7 @@ export const getPublicAssets = async (req, res) => {
         ...a.toObject(),
         group: grp,
         qrCode: effectiveQr,
+        upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : (setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici'),
         returnPercent: effectiveRate,
         minStake: Number(a.minStake) || 100,
       };
@@ -193,6 +194,7 @@ export const getAdminAssets = async (req, res) => {
         ...a.toObject(),
         group: grp,
         qrCode: effectiveQr,
+        upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : (setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici'),
         returnPercent: effectiveRate,
         minStake: Number(a.minStake) || 100,
       };
