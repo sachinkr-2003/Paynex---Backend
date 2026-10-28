@@ -277,35 +277,21 @@ export const approveDeposit = async (req, res) => {
           const dailyInterest = Math.max(1, Math.round((deposit.amount * returnRate) / 100));
 
           const cleanSym = matchedAsset?.symbol || targetStock;
-          const existingRound = await StakingRound.findOne({
+          await StakingRound.create({
             userId: user._id,
+            traderUid: user.uid,
+            traderName: user.name,
+            asset: cleanSym,
+            stakedAmount: deposit.amount,
+            returnPercent: returnRate,
+            profit: 0,
+            payout: deposit.amount,
+            dailyInterest,
+            durationSeconds: 30,
             status: 'Active',
-            $or: [{ asset: cleanSym }, { asset: targetStock }, { asset: matchedAsset?.name }]
+            startTime: new Date(),
           });
-
-          if (existingRound) {
-            existingRound.stakedAmount += deposit.amount;
-            existingRound.dailyInterest = Math.max(1, Math.round((existingRound.stakedAmount * existingRound.returnPercent) / 100));
-            existingRound.payout = existingRound.stakedAmount + (existingRound.totalInterestEarned || 0);
-            await existingRound.save();
-            console.log(`✅ Real payment approved: Added ₹${deposit.amount} capital to existing ${cleanSym} contract for ${user.name}. New total: ₹${existingRound.stakedAmount}`);
-          } else {
-            await StakingRound.create({
-              userId: user._id,
-              traderUid: user.uid,
-              traderName: user.name,
-              asset: cleanSym,
-              stakedAmount: deposit.amount,
-              returnPercent: returnRate,
-              profit: 0,
-              payout: deposit.amount,
-              dailyInterest,
-              durationSeconds: 30,
-              status: 'Active',
-              startTime: new Date(),
-            });
-            console.log(`✅ Real payment approved: Auto-activated ${cleanSym} contract (+${returnRate}%) for ${user.name}`);
-          }
+          console.log(`✅ Real payment approved: Auto-activated separate ${cleanSym} contract (₹${deposit.amount}, +${returnRate}%) for ${user.name}`);
         } catch (stkErr) {
           console.warn('Auto stock contract activation notice:', stkErr.message);
         }
