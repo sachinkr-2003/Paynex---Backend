@@ -50,7 +50,8 @@ const assetSchema = new mongoose.Schema(
     },
     minStake: {
       type: Number,
-      default: 100,
+      default: 1000,
+      min: 1000,
     },
     maxStake: {
       type: Number,

@@ -74,11 +74,11 @@ export const verifyBankPayment = async ({ utr, amount, upiId, transactionId }) =
   const numAmount = Number(amount);
 
   // Step 2: Amount sanity check
-  if (!numAmount || numAmount < 100) {
+  if (!numAmount || numAmount < 1000) {
     return {
       verified: false,
       code: 'INVALID_AMOUNT',
-      message: 'Transaction Failed: Minimum deposit amount is ₹100.',
+      message: 'Transaction Failed: Minimum deposit amount is ₹1,000.',
     };
   }
 

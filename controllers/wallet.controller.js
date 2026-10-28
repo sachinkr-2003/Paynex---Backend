@@ -24,7 +24,7 @@ export const getWalletHistory = async (req, res) => {
       gatewayConfig: {
         officialUpiId: settings?.officialUpiId || 'paynex.crypto@icici',
         merchantName: settings?.merchantName || 'Paynex Crypto Technologies Pvt Ltd',
-        minDeposit: settings?.minDeposit || 100,
+        minDeposit: Math.max(1000, Number(settings?.minDeposit) || 1000),
         minWithdrawal: settings?.minWithdrawal || 1000,
       },
     });
@@ -45,9 +45,9 @@ export const submitDeposit = async (req, res) => {
     }
 
     const settings = await Setting.findOne({ key: 'main_config' });
-    const minDeposit = (settings?.minDeposit && Number(settings.minDeposit) <= 100) ? Number(settings.minDeposit) : 100;
+    const minDeposit = Math.max(1000, Number(settings?.minDeposit) || 1000);
     if (Number(amount) < minDeposit) {
-      return res.status(400).json({ success: false, message: `Minimum deposit amount is ₹${minDeposit}.` });
+      return res.status(400).json({ success: false, message: `Minimum deposit amount is ₹${minDeposit.toLocaleString('en-IN')}.` });
     }
 
     const cleanUtr = utr.trim();

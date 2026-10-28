@@ -21,7 +21,7 @@ const settingSchema = new mongoose.Schema(
     },
     minDeposit: {
       type: Number,
-      default: 100, // Starting deposit allowed from ₹100
+      default: 1000, // Starting deposit allowed from ₹1,000
     },
     minWithdrawal: {
       type: Number,
