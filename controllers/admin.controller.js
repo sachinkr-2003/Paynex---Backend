@@ -32,14 +32,19 @@ export const getDashboardKPIs = async (req, res) => {
     const activeRounds = await StakingRound.find({ status: 'Active' });
     const liveStakingPool = activeRounds.reduce((sum, r) => sum + r.payout, 0);
 
-    // Total user money invested (Inflow: real deposits approved into treasury)
+    // Total user money invested (Inflow: real deposits approved into treasury + real stakes placed)
     const allApprovedDeposits = await Deposit.find({ status: 'Approved' });
     const totalDepositsApproved = allApprovedDeposits.reduce((sum, d) => sum + (d.amount || 0), 0);
 
     const allStakes = await StakingRound.find();
     const totalStakeVol = allStakes.reduce((sum, r) => sum + (r.stakedAmount || 0), 0);
-    // Real treasury inflow is strictly approved deposits (avoiding double-counting stakes which are funded from deposits)
-    const totalUserInvested = totalDepositsApproved;
+    const activeStakeVol = allStakes.filter((r) => r.status === 'Active').reduce((sum, r) => sum + (r.stakedAmount || 0), 0);
+
+    const allUsers = await User.find({ role: 'user' });
+    const totalStakedByUsers = allUsers.reduce((sum, u) => sum + (Number(u.totalStaked) || 0), 0);
+
+    // Accurate calculation: accounts for direct approved deposits as well as real stakes funded via wallet/credits
+    const totalUserInvested = Math.max(totalDepositsApproved, totalStakeVol, totalStakedByUsers);
 
     // Total money given to users (Outflow: real bank/UPI withdrawals disbursed from treasury)
     const allApprovedWithdrawals = await Withdrawal.find({ status: { $in: ['Approved', 'Completed'] } });
@@ -49,7 +54,7 @@ export const getDashboardKPIs = async (req, res) => {
     // Net platform profit / balance
     const netPlatformProfit = totalUserInvested - totalPaidOut;
 
-    const totalPlatformVolume = totalDepositsApproved + totalStakeVol;
+    const totalPlatformVolume = Math.max(totalDepositsApproved + totalStakeVol, totalUserInvested);
 
     const settings = await Setting.findOne({ key: 'main_config' });
 

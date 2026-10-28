@@ -77,7 +77,6 @@ const stakingRoundSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['Active', 'Matured & Settled', 'Cancelled'],
       default: 'Active',
     },
     time: {

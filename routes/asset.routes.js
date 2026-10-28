@@ -6,6 +6,7 @@ import {
   updateAsset,
   deleteAsset,
   toggleAssetStatus,
+  enableAllAssets,
   updateGroupQr,
   updateGroupInterestRate,
 } from '../controllers/asset.controller.js';
@@ -15,6 +16,12 @@ const router = express.Router();
 
 // Public routes for trading portal & apk (returns live assets with isEnabled flag)
 router.get('/', getPublicAssets);
+
+// Bulk Enable All Assets (1-Click Activate All 50+ Stocks)
+router.put('/admin/enable-all', protect, adminOnly, enableAllAssets);
+router.post('/admin/enable-all', protect, adminOnly, enableAllAssets);
+router.put('/enable-all', protect, adminOnly, enableAllAssets);
+router.post('/enable-all', protect, adminOnly, enableAllAssets);
 
 // Bulk Group QR update route (Groups 1 to 5)
 router.put('/admin/bulk-group-qr', protect, adminOnly, updateGroupQr);

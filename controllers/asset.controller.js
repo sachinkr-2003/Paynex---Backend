@@ -65,6 +65,7 @@ export const getPublicAssets = async (req, res) => {
         upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : (setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici'),
         returnPercent: effectiveRate,
         minStake: Number(a.minStake) || 100,
+        isEnabled: a.isEnabled !== false,
       };
     });
     const activeAssets = mappedAssets.filter((a) => a.isEnabled !== false);
@@ -76,7 +77,6 @@ export const getPublicAssets = async (req, res) => {
       allAssets: mappedAssets,
       groupQrs,
       groupInterestRates,
-      defaultGameProfitPercent: masterEngineRate,
       defaultGameProfitPercent: masterEngineRate,
     });
   } catch (error) {
@@ -90,6 +90,15 @@ export const toggleAssetStatus = async (req, res) => {
   try {
     const rawId = req.params.id || req.body.id || req.body.symbol || req.body._id;
     const { isEnabled, symbol, _id, id } = req.body;
+
+    if (isEnabled === undefined || isEnabled === null) {
+      return res.status(400).json({
+        success: false,
+        message: 'Status flag (isEnabled) is required as a boolean.',
+      });
+    }
+
+    const nextEnabled = Boolean(isEnabled);
 
     const queryConditions = [];
     if (_id && /^[0-9a-fA-F]{24}$/.test(_id)) {
@@ -122,7 +131,7 @@ export const toggleAssetStatus = async (req, res) => {
 
     const updatedAsset = await Asset.findOneAndUpdate(
       { $or: queryConditions },
-      { $set: { isEnabled: Boolean(isEnabled) } },
+      { $set: { isEnabled: nextEnabled } },
       { new: true, runValidators: false }
     );
 
@@ -134,6 +143,22 @@ export const toggleAssetStatus = async (req, res) => {
       success: true,
       message: `Stock "${updatedAsset.name}" (${updatedAsset.symbol}) is now ${updatedAsset.isEnabled ? 'ACTIVE / ENABLED' : 'DISABLED'}.`,
       asset: updatedAsset,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// @desc    Enable all stocks & game assets (1-Click Restore / Activate All 50+ Assets)
+// @route   PUT /api/assets/admin/enable-all
+export const enableAllAssets = async (req, res) => {
+  try {
+    const result = await Asset.updateMany({}, { $set: { isEnabled: true } });
+    return res.status(200).json({
+      success: true,
+      message: `All ${result.matchedCount || 50}+ stocks and assets are now ACTIVE and tradable!`,
+      modifiedCount: result.modifiedCount,
+      matchedCount: result.matchedCount,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -197,11 +222,12 @@ export const getAdminAssets = async (req, res) => {
         upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : (setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici'),
         returnPercent: effectiveRate,
         minStake: Number(a.minStake) || 100,
+        isEnabled: a.isEnabled !== false,
       };
     });
 
     const totalCount = await Asset.countDocuments();
-    const activeCount = await Asset.countDocuments({ isEnabled: true });
+    const activeCount = await Asset.countDocuments({ isEnabled: { $ne: false } });
     const stockCount = await Asset.countDocuments({ category: 'Stock' });
     const cryptoCount = await Asset.countDocuments({ category: 'Crypto' });
 
@@ -487,8 +513,11 @@ export const updateGroupQr = async (req, res) => {
             minStake: match?.minStake || 100,
             maxStake: match?.maxStake || 500000,
           },
+          $setOnInsert: {
+            isEnabled: true,
+          },
         },
-        { upsert: true, new: true }
+        { upsert: true, new: true, setDefaultsOnInsert: true }
       );
     }
 
@@ -576,8 +605,11 @@ export const updateGroupInterestRate = async (req, res) => {
             minStake: match?.minStake || 100,
             maxStake: match?.maxStake || 500000,
           },
+          $setOnInsert: {
+            isEnabled: true,
+          },
         },
-        { upsert: true, new: true }
+        { upsert: true, new: true, setDefaultsOnInsert: true }
       );
     }
 

@@ -196,7 +196,10 @@ export const exitStake = async (req, res) => {
     round.status = 'Completed';
     round.settledAt = new Date();
     round.note = `User exited contract. ₹${refundAmount} capital refunded to available balance.`;
-    await round.save();
+    await StakingRound.updateOne(
+      { _id: round._id },
+      { $set: { status: 'Completed', settledAt: round.settledAt, note: round.note } }
+    );
 
     return res.status(200).json({
       success: true,
