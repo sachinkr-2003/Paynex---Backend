@@ -32,26 +32,24 @@ export const getDashboardKPIs = async (req, res) => {
     const activeRounds = await StakingRound.find({ status: 'Active' });
     const liveStakingPool = activeRounds.reduce((sum, r) => sum + r.payout, 0);
 
-    // Total user money invested (Inflow: deposits + stakes)
+    // Total user money invested (Inflow: real deposits approved into treasury)
     const allApprovedDeposits = await Deposit.find({ status: 'Approved' });
     const totalDepositsApproved = allApprovedDeposits.reduce((sum, d) => sum + (d.amount || 0), 0);
 
     const allStakes = await StakingRound.find();
     const totalStakeVol = allStakes.reduce((sum, r) => sum + (r.stakedAmount || 0), 0);
-    const totalUserInvested = totalDepositsApproved + totalStakeVol;
+    // Real treasury inflow is strictly approved deposits (avoiding double-counting stakes which are funded from deposits)
+    const totalUserInvested = totalDepositsApproved;
 
-    // Total money given to users (Outflow: approved/completed withdrawals + won payouts)
+    // Total money given to users (Outflow: real bank/UPI withdrawals disbursed from treasury)
     const allApprovedWithdrawals = await Withdrawal.find({ status: { $in: ['Approved', 'Completed'] } });
     const totalWithdrawalsPaid = allApprovedWithdrawals.reduce((sum, w) => sum + (w.amount || 0), 0);
-    const totalWonPayouts = allStakes
-      .filter((r) => r.status === 'Won' || r.status === 'Completed')
-      .reduce((sum, r) => sum + (r.payout || 0), 0);
-    const totalPaidOut = totalWithdrawalsPaid + totalWonPayouts;
+    const totalPaidOut = totalWithdrawalsPaid;
 
     // Net platform profit / balance
     const netPlatformProfit = totalUserInvested - totalPaidOut;
 
-    const totalPlatformVolume = totalUserInvested;
+    const totalPlatformVolume = totalDepositsApproved + totalStakeVol;
 
     const settings = await Setting.findOne({ key: 'main_config' });
 
@@ -284,8 +282,8 @@ export const approveDeposit = async (req, res) => {
             asset: cleanSym,
             stakedAmount: deposit.amount,
             returnPercent: returnRate,
-            profit: 0,
-            payout: deposit.amount,
+            profit,
+            payout,
             dailyInterest,
             durationSeconds: 30,
             status: 'Active',

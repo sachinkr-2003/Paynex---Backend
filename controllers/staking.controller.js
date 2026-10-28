@@ -80,6 +80,9 @@ export const placeStake = async (req, res) => {
     user.totalStaked += numAmount;
     await user.save();
 
+    const calculatedProfit = Math.round((numAmount * returnRate) / 100);
+    const calculatedPayout = numAmount + calculatedProfit;
+
     const round = await StakingRound.create({
       userId,
       traderUid: user.uid,
@@ -88,8 +91,8 @@ export const placeStake = async (req, res) => {
       stakedAmount: numAmount,
       returnPercent: returnRate,
       dailyInterest,
-      profit: 0,
-      payout: numAmount,
+      profit: calculatedProfit,
+      payout: calculatedPayout,
       totalInterestEarned: 0,
       daysCredited: 0,
       lastInterestCreditedAt: null,
@@ -276,9 +279,21 @@ export const getUserRounds = async (req, res) => {
     const userId = req.user.id;
     const rounds = await StakingRound.find({ userId }).sort({ createdAt: -1 });
 
+    const sanitizedRounds = rounds.map((r) => {
+      const staked = Number(r.stakedAmount) || 0;
+      const rate = Number(r.returnPercent) || 0;
+      const profit = Number(r.profit) > 0 ? Number(r.profit) : Math.round((staked * rate) / 100);
+      const payout = Number(r.payout) > staked ? Number(r.payout) : (staked + profit);
+      return {
+        ...r.toObject(),
+        profit,
+        payout,
+      };
+    });
+
     return res.status(200).json({
       success: true,
-      rounds,
+      rounds: sanitizedRounds,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -295,9 +310,21 @@ export const getLivePool = async (req, res) => {
 
     const settings = await Setting.findOne({ key: 'main_config' });
 
+    const sanitizedActive = activeRounds.map((r) => {
+      const staked = Number(r.stakedAmount) || 0;
+      const rate = Number(r.returnPercent) || 0;
+      const profit = Number(r.profit) > 0 ? Number(r.profit) : Math.round((staked * rate) / 100);
+      const payout = Number(r.payout) > staked ? Number(r.payout) : (staked + profit);
+      return {
+        ...r.toObject(),
+        profit,
+        payout,
+      };
+    });
+
     return res.status(200).json({
       success: true,
-      activeStakers: activeRounds,
+      activeStakers: sanitizedActive,
       returnPercent: settings?.defaultGameProfitPercent || 30,
     });
   } catch (error) {
