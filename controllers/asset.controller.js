@@ -301,10 +301,13 @@ export const updateAsset = async (req, res) => {
     const updates = req.body;
 
     // Route alias safeguards
-    if (rawId === 'bulk-group-qr' || req.params?.id === 'bulk-group-qr') {
+    const isGroupNumber = /^[1-5]$/.test(String(rawId || '').trim());
+    if (rawId === 'bulk-group-qr' || req.params?.id === 'bulk-group-qr' || (isGroupNumber && (updates.qrCode !== undefined || req.body.qrCode !== undefined))) {
+      if (isGroupNumber) req.body.group = Number(rawId);
       return updateGroupQr(req, res);
     }
-    if (rawId === 'bulk-group-interest' || req.params?.id === 'bulk-group-interest') {
+    if (rawId === 'bulk-group-interest' || req.params?.id === 'bulk-group-interest' || (isGroupNumber && (updates.returnPercent !== undefined || updates.rate !== undefined))) {
+      if (isGroupNumber) req.body.group = Number(rawId);
       return updateGroupInterestRate(req, res);
     }
     if (rawId === 'toggle-status' || req.params?.id === 'toggle-status') {

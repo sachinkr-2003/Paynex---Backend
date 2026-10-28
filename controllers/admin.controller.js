@@ -547,6 +547,20 @@ export const updateSettings = async (req, res) => {
       }
     }
 
+    // If groupQrs updated, sync group QR code in MongoDB for all assets in that group
+    if (updates.groupQrs && typeof updates.groupQrs === 'object') {
+      const groupsList = [G1, G2, G3, G4, G5];
+      for (const [grp, qr] of Object.entries(updates.groupQrs)) {
+        const gNum = Number(grp);
+        const cleanQr = (qr || '').trim();
+        const syms = groupsList[gNum - 1] || [];
+        await Asset.updateMany(
+          { $or: [{ group: gNum }, { symbol: { $in: syms } }, { id: { $in: syms } }] },
+          { $set: { qrCode: cleanQr, group: gNum } }
+        );
+      }
+    }
+
     return res.status(200).json({
       success: true,
       message: 'System settings saved successfully.',
