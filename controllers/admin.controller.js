@@ -5,7 +5,7 @@ import StakingRound from '../models/stakingRound.model.js';
 import Plan from '../models/plan.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
-import { G1, G2, G3, G4, G5 } from './asset.controller.js';
+import { G1, G2, G3, G4, G5, getAssetGroup } from './asset.controller.js';
 import { distributeDailyInterest } from '../services/interestScheduler.js';
 
 // @desc    Get complete Master Dashboard KPIs
@@ -236,12 +236,10 @@ export const approveDeposit = async (req, res) => {
     deposit.status = 'Approved';
     await deposit.save();
 
-    // Auto credit to trader wallet balance
+    // Auto credit to trader wallet balance or activate stock contract
     const user = await User.findById(deposit.userId);
     let referralMsg = '';
     if (user) {
-      user.balance += deposit.amount;
-
       // 5% FIRST DEPOSIT REFERRAL COMMISSION
       if (user.referredBy && !user.firstDepositBonusGiven) {
         try {
@@ -260,7 +258,6 @@ export const approveDeposit = async (req, res) => {
       }
 
       user.hasDeposited = true;
-      await user.save();
 
       // Auto-activate real staking contract if deposit was submitted for stock purchase
       const targetStock = deposit.companyId || deposit.stockSymbol || (deposit.method && deposit.method.includes('Stock Purchase (') ? deposit.method.match(/Stock Purchase \(([^)]+)\)/)?.[1] : null);
@@ -270,7 +267,11 @@ export const approveDeposit = async (req, res) => {
             $or: [{ id: targetStock }, { symbol: targetStock.toUpperCase() }, { name: targetStock }]
           });
           const settings = await Setting.findOne({ key: 'main_config' });
-          const returnRate = Math.min(12, Math.max(2, matchedAsset?.returnPercent || settings?.defaultGameProfitPercent || 12));
+          const grp = getAssetGroup(matchedAsset);
+          const groupRate = (settings?.groupInterestRates && settings.groupInterestRates[grp] !== undefined && settings.groupInterestRates[grp] !== null)
+            ? Number(settings.groupInterestRates[grp])
+            : null;
+          const returnRate = Math.min(12, Math.max(2, groupRate ?? matchedAsset?.returnPercent ?? settings?.defaultGameProfitPercent ?? 5));
           const profit = Math.round((deposit.amount * returnRate) / 100);
           const payout = deposit.amount + profit;
           const dailyInterest = Math.max(1, Math.round((deposit.amount * returnRate) / 100));
@@ -289,10 +290,16 @@ export const approveDeposit = async (req, res) => {
             status: 'Active',
             startTime: new Date(),
           });
-          console.log(`✅ Real payment approved: Auto-activated ${targetStock} contract for ${user.name}`);
+          console.log(`✅ Real payment approved: Auto-activated ${targetStock} contract (+${returnRate}%) for ${user.name}`);
         } catch (stkErr) {
           console.warn('Auto stock contract activation notice:', stkErr.message);
         }
+        // Since funds were used to buy the stock contract, do not add to available balance (avoid double balance)
+        await user.save();
+      } else {
+        // Regular wallet recharge: credit to available balance
+        user.balance += deposit.amount;
+        await user.save();
       }
     }
 
