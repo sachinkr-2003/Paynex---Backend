@@ -3,6 +3,7 @@ import {
   getReturnRate,
   placeStake,
   settleStake,
+  exitStake,
   getUserRounds,
   getLivePool,
 } from '../controllers/staking.controller.js';
@@ -14,6 +15,7 @@ router.get('/rate', getReturnRate);
 router.get('/live-pool', getLivePool);
 router.post('/place', protect, placeStake);
 router.post('/settle/:id', protect, settleStake);
+router.post('/exit/:id', protect, exitStake);
 router.get('/my-rounds', protect, getUserRounds);
 
 export default router;

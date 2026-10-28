@@ -33,9 +33,19 @@ export async function distributeDailyInterest({ force = false } = {}) {
   let totalDistributed = 0;
   const details = [];
 
+  // Today's 5:00 AM IST threshold
+  const today5amIST = new Date(`${istDateString}T05:00:00+05:30`);
+
   for (const round of activeRounds) {
     try {
-      // Unless force=true, ensure user hasn't already received today's interest
+      // 1. Contracts created today on or after 5:00 AM IST are NOT eligible for today's 5 AM interest.
+      // Their first 24h interest cycle starts at tomorrow's 5:00 AM IST.
+      if (!force && round.createdAt && new Date(round.createdAt) >= today5amIST) {
+        console.log(`[5 AM Interest Engine] Contract ${round.id || round._id} was created today after 5:00 AM (${round.createdAt.toISOString()}). First interest will be credited at tomorrow 5:00 AM.`);
+        continue;
+      }
+
+      // 2. Unless force=true, ensure user hasn't already received today's interest
       if (!force && round.lastInterestCreditedAt) {
         const lastCreditIST = new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(
           new Date(round.lastInterestCreditedAt)

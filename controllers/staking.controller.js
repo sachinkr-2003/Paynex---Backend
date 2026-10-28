@@ -149,6 +149,60 @@ export const settleStake = async (req, res) => {
   }
 };
 
+// @desc    Exit an active contract & refund capital to wallet
+// @route   POST /api/staking/exit/:id
+export const exitStake = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.user.id;
+    const query = mongoose.isValidObjectId(id) ? { $or: [{ id }, { _id: id }] } : { id };
+    const round = await StakingRound.findOne(query);
+
+    if (!round) {
+      return res.status(404).json({ success: false, message: 'Contract not found.' });
+    }
+
+    // Verify ownership
+    if (round.userId.toString() !== userId.toString()) {
+      return res.status(403).json({ success: false, message: 'Unauthorized to exit this contract.' });
+    }
+
+    if (round.status !== 'Active') {
+      return res.status(400).json({ success: false, message: `Contract is already ${round.status}.` });
+    }
+
+    const refundAmount = Number(round.stakedAmount) || 0;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User account not found.' });
+    }
+
+    // Refund capital back into available balance
+    user.balance = (user.balance || 0) + refundAmount;
+    if (user.totalStaked && user.totalStaked >= refundAmount) {
+      user.totalStaked -= refundAmount;
+    }
+    await user.save();
+
+    // Mark contract as Completed / Exited
+    round.status = 'Completed';
+    round.settledAt = new Date();
+    round.note = `User exited contract. ₹${refundAmount} capital refunded to available balance.`;
+    await round.save();
+
+    return res.status(200).json({
+      success: true,
+      message: `Contract on ${round.asset} exited! ₹${refundAmount.toLocaleString('en-IN')} returned to your Available Balance.`,
+      round,
+      refundAmount,
+      newBalance: user.balance,
+    });
+  } catch (error) {
+    console.error('Exit contract error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Get active rounds for current user
 // @route   GET /api/staking/my-rounds
 export const getUserRounds = async (req, res) => {
