@@ -203,6 +203,72 @@ export const exitStake = async (req, res) => {
   }
 };
 
+// @desc    Top-up / add more capital to an existing active stock contract
+// @route   POST /api/staking/topup/:id
+export const topUpStake = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { amount } = req.body;
+    const userId = req.user.id;
+    const addAmt = Number(amount);
+
+    if (!addAmt || addAmt <= 0) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid top-up amount.' });
+    }
+
+    const query = mongoose.isValidObjectId(id) ? { $or: [{ id }, { _id: id }] } : { id };
+    const round = await StakingRound.findOne(query);
+
+    if (!round) {
+      return res.status(404).json({ success: false, message: 'Contract not found.' });
+    }
+
+    if (round.userId.toString() !== userId.toString()) {
+      return res.status(403).json({ success: false, message: 'Unauthorized.' });
+    }
+
+    if (round.status !== 'Active') {
+      return res.status(400).json({ success: false, message: `Contract is ${round.status}. You can only add capital to active contracts.` });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found.' });
+    }
+
+    if (user.balance < addAmt) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient wallet balance (₹${user.balance.toLocaleString('en-IN')}). Please recharge first or switch to QR Code.`,
+      });
+    }
+
+    // Deduct wallet balance & track staked
+    user.balance -= addAmt;
+    user.totalStaked = (user.totalStaked || 0) + addAmt;
+    await user.save();
+
+    // Increase contract capital
+    round.stakedAmount += addAmt;
+    round.dailyInterest = Math.max(1, Math.round((round.stakedAmount * round.returnPercent) / 100));
+    round.payout = round.stakedAmount + (round.totalInterestEarned || 0);
+    await round.save();
+
+    console.log(`✅ User ${user.name} added ₹${addAmt} to ${round.asset} contract #${round.id || round._id}. New total: ₹${round.stakedAmount}`);
+
+    return res.status(200).json({
+      success: true,
+      message: `Successfully added ₹${addAmt.toLocaleString('en-IN')} to your ${round.asset} contract! Total Investment is now ₹${round.stakedAmount.toLocaleString('en-IN')}.`,
+      round,
+      newBalance: user.balance,
+      newStakedAmount: round.stakedAmount,
+    });
+  } catch (error) {
+    console.error('Top-up contract error:', error);
+    return res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 // @desc    Get active rounds for current user
 // @route   GET /api/staking/my-rounds
 export const getUserRounds = async (req, res) => {
