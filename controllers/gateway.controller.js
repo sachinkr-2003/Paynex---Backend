@@ -13,8 +13,8 @@ export const initiateGatewayOrder = async (req, res) => {
     const userId = req.user.id;
 
     const numAmount = Number(amount);
-    if (!numAmount || numAmount < 1000) {
-      return res.status(400).json({ success: false, message: 'Minimum deposit amount is ₹1,000.' });
+    if (!numAmount || numAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid deposit amount.' });
     }
 
     const user = await User.findById(userId);

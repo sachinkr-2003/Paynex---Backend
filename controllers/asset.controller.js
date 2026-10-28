@@ -63,7 +63,7 @@ export const getPublicAssets = async (req, res) => {
         group: grp,
         qrCode: effectiveQr,
         returnPercent: effectiveRate,
-        minStake: Math.max(1000, Number(a.minStake) || 1000),
+        minStake: Number(a.minStake) || 100,
       };
     });
     const activeAssets = mappedAssets.filter((a) => a.isEnabled !== false);
@@ -194,7 +194,7 @@ export const getAdminAssets = async (req, res) => {
         group: grp,
         qrCode: effectiveQr,
         returnPercent: effectiveRate,
-        minStake: Math.max(1000, Number(a.minStake) || 1000),
+        minStake: Number(a.minStake) || 100,
       };
     });
 
@@ -262,7 +262,7 @@ export const createAsset = async (req, res) => {
     }
 
     const targetReturn = Math.min(12, Math.max(2, Number(returnPercent) || 5));
-    const targetMinStake = Math.max(1000, Number(minStake) || 1000);
+    const targetMinStake = Number(minStake) || 100;
     const targetBasePrice = Number(basePrice) || targetMinStake || 1000;
 
     const newAsset = await Asset.create({
@@ -353,7 +353,7 @@ export const updateAsset = async (req, res) => {
       updateFields.returnPercent = Math.min(100, Math.max(0, Number(updates.returnPercent)));
     }
     if (updates.minStake !== undefined) {
-      updateFields.minStake = Math.max(1000, Number(updates.minStake));
+      updateFields.minStake = Math.max(1, Number(updates.minStake));
     }
     if (updates.maxStake !== undefined) updateFields.maxStake = Number(updates.maxStake);
     if (updates.isEnabled !== undefined) updateFields.isEnabled = Boolean(updates.isEnabled);
