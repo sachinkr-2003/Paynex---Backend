@@ -27,11 +27,9 @@ export const getAssetGroup = (asset, index = 0) => {
 // @route   GET /api/assets
 export const getPublicAssets = async (req, res) => {
   try {
-    const [assets, setting] = await Promise.all([
-      Asset.find({}).sort({ createdAt: 1 }),
-      Setting.findOne({ key: 'main_config' }),
-    ]);
-    const masterEngineRate = Math.min(12, Math.max(2, Number(setting?.defaultGameProfitPercent) || 12));
+    // 1. Fetch setting first (contains groupQrs, groupInterestRates, defaultGameProfitPercent, officialUpiId)
+    const setting = await Setting.findOne({ key: 'main_config' }).lean();
+    const masterEngineRate = Math.min(12, Math.max(2, Number(setting?.defaultGameProfitPercent) || 5));
     const groupQrs = setting?.groupQrs || {};
     const settingGroupRates = setting?.groupInterestRates || {};
     const groupInterestRates = {
@@ -42,13 +40,21 @@ export const getPublicAssets = async (req, res) => {
       5: masterEngineRate,
       ...(typeof settingGroupRates === 'object' ? settingGroupRates : {}),
     };
+    const officialUpi = setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici';
 
-    const mappedAssets = assets.map((a, idx) => {
+    // 2. Fetch assets from DB with 3s max timeout and lean() to prevent memory lag
+    let rawAssets = [];
+    try {
+      rawAssets = await Asset.find({}).lean().maxTimeMS(3000);
+    } catch (err) {
+      console.warn('Asset.find notice, falling back to initialAssetsList:', err.message);
+    }
+    if (!rawAssets || rawAssets.length === 0) {
+      rawAssets = initialAssetsList;
+    }
+
+    const mappedAssets = rawAssets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
-      // Group QR is authoritative when set
-      const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
-        ? groupQrs[grp].trim()
-        : (a.qrCode || '');
       // Admin Full Control: Group Rate > Individual Asset DB Rate > Master Engine Rate
       const groupRate = settingGroupRates[grp] !== undefined && settingGroupRates[grp] !== null
         ? Number(settingGroupRates[grp])
@@ -58,16 +64,23 @@ export const getPublicAssets = async (req, res) => {
         : null;
       const effectiveRate = Math.min(12, Math.max(2, groupRate ?? assetRate ?? masterEngineRate));
 
+      // Group QR is authoritative; don't bloat each item with 100KB base64 if it's the group QR
+      const individualQr = (a.qrCode && typeof a.qrCode === 'string' && a.qrCode.trim().length > 0)
+        ? a.qrCode.trim()
+        : '';
+      const hasCustomQr = individualQr.length > 0 && individualQr !== (groupQrs[grp] || '');
+
       return {
-        ...a.toObject(),
+        ...a,
         group: grp,
-        qrCode: effectiveQr,
-        upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : (setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici'),
+        qrCode: hasCustomQr ? individualQr : (groupQrs[grp] ? '' : individualQr),
+        upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : officialUpi,
         returnPercent: effectiveRate,
-        minStake: Number(a.minStake) || 100,
+        minStake: Number(a.minStake) || 1000,
         isEnabled: a.isEnabled !== false,
       };
     });
+
     const activeAssets = mappedAssets.filter((a) => a.isEnabled !== false);
     return res.status(200).json({
       success: true,
@@ -78,6 +91,7 @@ export const getPublicAssets = async (req, res) => {
       groupQrs,
       groupInterestRates,
       defaultGameProfitPercent: masterEngineRate,
+      officialUpiId: officialUpi,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

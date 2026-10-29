@@ -9,13 +9,16 @@ import { getAssetGroup } from './asset.controller.js';
 // @route   GET /api/staking/rate
 export const getReturnRate = async (req, res) => {
   try {
-    const settings = await Setting.findOne({ key: 'main_config' });
+    const settings = await Setting.findOne({ key: 'main_config' }).lean();
     const rawRate = settings?.defaultGameProfitPercent || 5;
     const rate = Math.min(12, Math.max(2, rawRate));
 
     return res.status(200).json({
       success: true,
       returnPercent: rate,
+      groupInterestRates: settings?.groupInterestRates || DEFAULT_GROUP_INTEREST,
+      groupQrs: settings?.groupQrs || {},
+      officialUpiId: settings?.officialUpiId || settings?.upiId || 'paynex.crypto@icici',
       message: `Guaranteed +${rate}% Fixed Return Engine Active`,
     });
   } catch (error) {
