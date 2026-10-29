@@ -74,7 +74,8 @@ const assetSchema = new mongoose.Schema(
     },
     qrCode: {
       type: String,
-      default: '', // Base64 data URI or image URL for custom company QR code
+      default: '',
+      select: false, // Exclude from normal queries — fetched only when explicitly needed
     },
     payeeName: {
       type: String,
@@ -88,6 +89,12 @@ const assetSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Indexes for fast queries without sort memory issues
+assetSchema.index({ symbol: 1 });
+assetSchema.index({ group: 1 });
+assetSchema.index({ isEnabled: 1 });
+assetSchema.index({ createdAt: -1 });
 
 const Asset = mongoose.model('Asset', assetSchema);
 export default Asset;

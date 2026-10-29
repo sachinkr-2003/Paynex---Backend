@@ -29,7 +29,7 @@ export const getPublicAssets = async (req, res) => {
   try {
     // 1. Fetch setting first (contains groupQrs, groupInterestRates, defaultGameProfitPercent, officialUpiId)
     const setting = await Setting.findOne({ key: 'main_config' }).lean();
-    const masterEngineRate = Math.min(12, Math.max(2, Number(setting?.defaultGameProfitPercent) || 5));
+    const masterEngineRate = Math.max(1, Number(setting?.defaultGameProfitPercent) || 5);
     const groupQrs = setting?.groupQrs || {};
     const settingGroupRates = setting?.groupInterestRates || {};
     const groupInterestRates = {
@@ -45,7 +45,7 @@ export const getPublicAssets = async (req, res) => {
     // 2. Fetch assets from DB with 3s max timeout and lean() to prevent memory lag
     let rawAssets = [];
     try {
-      rawAssets = await Asset.find({}).lean().maxTimeMS(3000);
+      rawAssets = await Asset.find({}).select('+qrCode').lean().maxTimeMS(5000);
     } catch (err) {
       console.warn('Asset.find notice, falling back to initialAssetsList:', err.message);
     }
@@ -62,18 +62,16 @@ export const getPublicAssets = async (req, res) => {
       const assetRate = a.returnPercent !== undefined && a.returnPercent !== null && Number(a.returnPercent) > 0
         ? Number(a.returnPercent)
         : null;
-      const effectiveRate = Math.min(12, Math.max(2, groupRate ?? assetRate ?? masterEngineRate));
+      const effectiveRate = Math.max(1, groupRate ?? assetRate ?? masterEngineRate);
 
-      // Group QR is authoritative; don't bloat each item with 100KB base64 if it's the group QR
       const individualQr = (a.qrCode && typeof a.qrCode === 'string' && a.qrCode.trim().length > 0)
         ? a.qrCode.trim()
         : '';
-      const hasCustomQr = individualQr.length > 0 && individualQr !== (groupQrs[grp] || '');
 
       return {
         ...a,
         group: grp,
-        qrCode: hasCustomQr ? individualQr : (groupQrs[grp] ? '' : individualQr),
+        qrCode: groupQrs[grp] ? groupQrs[grp] : individualQr,
         upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : officialUpi,
         returnPercent: effectiveRate,
         minStake: Number(a.minStake) || 1000,
@@ -199,10 +197,10 @@ export const getAdminAssets = async (req, res) => {
     }
 
     const [assets, setting] = await Promise.all([
-      Asset.find(query).sort({ createdAt: -1 }),
-      Setting.findOne({ key: 'main_config' }),
+      Asset.find(query).select('+qrCode').lean().maxTimeMS(5000),
+      Setting.findOne({ key: 'main_config' }).lean(),
     ]);
-    const masterEngineRate = Math.min(12, Math.max(2, Number(setting?.defaultGameProfitPercent) || 12));
+    const masterEngineRate = Math.max(1, Number(setting?.defaultGameProfitPercent) || 12);
     const groupQrs = setting?.groupQrs || {};
     const settingGroupRates = setting?.groupInterestRates || {};
     const groupInterestRates = {
@@ -227,10 +225,10 @@ export const getAdminAssets = async (req, res) => {
       const assetRate = a.returnPercent !== undefined && a.returnPercent !== null && Number(a.returnPercent) > 0
         ? Number(a.returnPercent)
         : null;
-      const effectiveRate = Math.min(12, Math.max(2, groupRate ?? assetRate ?? masterEngineRate));
+      const effectiveRate = Math.max(1, groupRate ?? assetRate ?? masterEngineRate);
 
       return {
-        ...a.toObject(),
+        ...a,
         group: grp,
         qrCode: effectiveQr,
         upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : (setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici'),
@@ -240,10 +238,10 @@ export const getAdminAssets = async (req, res) => {
       };
     });
 
-    const totalCount = await Asset.countDocuments();
-    const activeCount = await Asset.countDocuments({ isEnabled: { $ne: false } });
-    const stockCount = await Asset.countDocuments({ category: 'Stock' });
-    const cryptoCount = await Asset.countDocuments({ category: 'Crypto' });
+    const totalCount = mappedAssets.length;
+    const activeCount = mappedAssets.filter(a => a.isEnabled !== false).length;
+    const stockCount = mappedAssets.filter(a => a.category === 'Stock').length;
+    const cryptoCount = mappedAssets.filter(a => a.category === 'Crypto').length;
 
     return res.status(200).json({
       success: true,
@@ -303,7 +301,7 @@ export const createAsset = async (req, res) => {
       assetId = `${cleanSymbol}/INR`;
     }
 
-    const targetReturn = Math.min(12, Math.max(2, Number(returnPercent) || 5));
+    const targetReturn = Math.max(1, Number(returnPercent) || 5);
     const targetMinStake = Number(minStake) || 100;
     const targetBasePrice = Number(basePrice) || targetMinStake || 1000;
 
@@ -324,7 +322,7 @@ export const createAsset = async (req, res) => {
       qrCode: qrCode || '',
       payeeName: (payeeName || `${cleanName} Desk`).trim(),
       description: description || '',
-      group: Math.min(5, Math.max(1, Number(req.body.group) || getAssetGroup({ symbol: cleanSym }))),
+      group: Math.min(5, Math.max(1, Number(req.body.group) || getAssetGroup({ symbol: cleanSymbol }))),
     });
 
     return res.status(201).json({
@@ -416,7 +414,7 @@ export const updateAsset = async (req, res) => {
     }
 
     if (updates.returnPercent !== undefined) {
-      const cleanRate = Math.min(12, Math.max(2, Number(updates.returnPercent)));
+      const cleanRate = Math.max(1, Number(updates.returnPercent));
       const targetGrp = asset.group || getAssetGroup(asset);
       if (targetGrp >= 1 && targetGrp <= 5) {
         await Asset.updateMany({ group: targetGrp }, { $set: { returnPercent: cleanRate } });
@@ -567,7 +565,7 @@ export const updateGroupInterestRate = async (req, res) => {
   try {
     const { group, returnPercent, rate } = req.body;
     const numGroup = Math.min(5, Math.max(1, Number(group) || 1));
-    const targetRate = Math.min(12, Math.max(2, Number(returnPercent ?? rate) || 5));
+    const targetRate = Math.max(1, Number(returnPercent ?? rate) || 5);
 
     const groupsList = [G1, G2, G3, G4, G5];
     const targetSymbols = groupsList[numGroup - 1] || [];
