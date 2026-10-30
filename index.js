@@ -36,7 +36,21 @@ app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 app.use(
   cors({
-    origin: '*',
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        process.env.USER_PANEL_URL,
+        process.env.ADMIN_PANEL_URL,
+        'http://localhost:5173',
+        'http://localhost:5174',
+        'http://localhost:3000',
+      ].filter(Boolean);
+      // Allow requests with no origin (mobile apps, curl, etc.)
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(null, true); // Keep permissive for now; tighten in production
+      }
+    },
     credentials: true,
   })
 );

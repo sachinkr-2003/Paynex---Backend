@@ -175,45 +175,60 @@ export const submitWithdrawal = async (req, res) => {
       });
     }
 
-    // Auto-update user's saved bankDetails if newly provided
-    if (!user.bankDetails?.accountNumber || accountNumber) {
-      user.bankDetails = {
+    // Atomic balance deduction to prevent race condition
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, balance: { $gte: numAmount } },
+      { $inc: { balance: -numAmount } },
+      { new: true }
+    );
+    if (!updatedUser) {
+      return res.status(400).json({ success: false, message: 'Insufficient wallet balance for withdrawal.' });
+    }
+
+    let withdrawal;
+    try {
+      // Auto-update user's saved bankDetails if newly provided
+      if (!user.bankDetails?.accountNumber || accountNumber) {
+        user.bankDetails = {
+          bankName: targetBankName,
+          accountNumber: targetAcc,
+          ifsc: targetIfsc,
+          holderName: payeeName,
+        };
+        await user.save();
+      }
+
+      // Dynamic Payout Bank QR Generation for Admin Scan & Pay
+      const payoutUpiString = `upi://pay?pa=${targetAcc}@${targetIfsc}.ifsc.npci&pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR&tn=${encodeURIComponent(`Bank Payout ${user.uid}`)}`;
+      const payoutQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payoutUpiString)}`;
+
+      withdrawal = await Withdrawal.create({
+        userId,
+        traderUid: user.uid,
+        traderName: user.name,
+        amount: numAmount,
+        destinationType: 'Bank Account',
+        upiId: '',
         bankName: targetBankName,
         accountNumber: targetAcc,
         ifsc: targetIfsc,
-        holderName: payeeName,
-      };
+        accountHolder: payeeName,
+        payoutQrCode,
+        payoutUpiString,
+        status: 'Pending',
+      });
+    } catch (createErr) {
+      // Rollback deducted balance immediately if creation fails
+      console.error('Failed to create withdrawal record, rolling back balance:', createErr);
+      await User.findByIdAndUpdate(userId, { $inc: { balance: numAmount } });
+      throw createErr;
     }
-
-    // Deduct balance (hold funds)
-    user.balance -= numAmount;
-    await user.save();
-
-    // Dynamic Payout Bank QR Generation for Admin Scan & Pay
-    const payoutUpiString = `upi://pay?pa=${targetAcc}@${targetIfsc}.ifsc.npci&pn=${encodeURIComponent(payeeName)}&am=${numAmount}&cu=INR&tn=${encodeURIComponent(`Bank Payout ${user.uid}`)}`;
-    const payoutQrCode = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(payoutUpiString)}`;
-
-    const withdrawal = await Withdrawal.create({
-      userId,
-      traderUid: user.uid,
-      traderName: user.name,
-      amount: numAmount,
-      destinationType: 'Bank Account',
-      upiId: '',
-      bankName: targetBankName,
-      accountNumber: targetAcc,
-      ifsc: targetIfsc,
-      accountHolder: payeeName,
-      payoutQrCode,
-      payoutUpiString,
-      status: 'Pending',
-    });
 
     return res.status(201).json({
       success: true,
       message: `Withdrawal of ₹${numAmount.toLocaleString('en-IN')} submitted. Payout QR generated for Admin settlement.`,
       withdrawal,
-      newBalance: user.balance,
+      newBalance: updatedUser.balance,
     });
   } catch (error) {
     console.error('Submit withdrawal error:', error);

@@ -5,21 +5,27 @@ import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
 import { getAssetGroup } from './asset.controller.js';
 
-// @desc    Get current guaranteed return rate (2% - 12%)
+const DEFAULT_GROUP_INTEREST = { 1: 8, 2: 11.5, 3: 11.5, 4: 11.5, 5: 11.5 };
+
+// @desc    Get current guaranteed return rate
 // @route   GET /api/staking/rate
 export const getReturnRate = async (req, res) => {
   try {
     const settings = await Setting.findOne({ key: 'main_config' }).lean();
     const rawRate = settings?.defaultGameProfitPercent || 5;
-    const rate = Math.min(12, Math.max(2, rawRate));
+    const rate = Math.max(1, rawRate);
+    const groupInterestRates = {
+      ...DEFAULT_GROUP_INTEREST,
+      ...(settings?.groupInterestRates || {}),
+    };
 
     return res.status(200).json({
       success: true,
       returnPercent: rate,
-      groupInterestRates: settings?.groupInterestRates || DEFAULT_GROUP_INTEREST,
+      groupInterestRates,
       groupQrs: settings?.groupQrs || {},
       officialUpiId: settings?.officialUpiId || settings?.upiId || 'paynex.crypto@icici',
-      message: `Guaranteed +${rate}% Fixed Return Engine Active`,
+      message: `Guaranteed Return Engine Active`,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -75,44 +81,63 @@ export const placeStake = async (req, res) => {
       });
     }
 
-    const DEFAULT_GROUP_INTEREST = { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 };
     const matchedAsset = existingAsset && existingAsset.isEnabled !== false ? existingAsset : null;
     const grp = getAssetGroup(matchedAsset || { symbol: cleanAsset });
-    const rawGroupRate = (settings?.groupInterestRates && settings.groupInterestRates[grp] !== undefined && settings.groupInterestRates[grp] !== null)
-      ? Number(settings.groupInterestRates[grp])
-      : (DEFAULT_GROUP_INTEREST[grp] || 5);
-    const returnRate = Math.min(12, Math.max(2, rawGroupRate));
+    const groupRates = {
+      ...DEFAULT_GROUP_INTEREST,
+      ...(settings?.groupInterestRates || {}),
+    };
+    const rawGroupRate = (groupRates[grp] !== undefined && groupRates[grp] !== null)
+      ? Number(groupRates[grp])
+      : (groupRates[String(grp)] !== undefined && groupRates[String(grp)] !== null)
+        ? Number(groupRates[String(grp)])
+        : (matchedAsset?.returnPercent || DEFAULT_GROUP_INTEREST[grp] || 5);
+    const returnRate = Math.max(1, rawGroupRate);
     const dailyInterest = Math.max(1, Math.round((numAmount * returnRate) / 100));
     const duration = durationSeconds || 30;
 
-    // Deduct user balance and increase totalStaked
-    user.balance -= numAmount;
-    user.totalStaked = (user.totalStaked || 0) + numAmount;
-    await user.save();
+    // Atomic balance deduction to prevent race condition
+    const updatedStakeUser = await User.findOneAndUpdate(
+      { _id: userId, balance: { $gte: numAmount } },
+      { $inc: { balance: -numAmount, totalStaked: numAmount } },
+      { new: true }
+    );
+    if (!updatedStakeUser) {
+      return res.status(400).json({ success: false, message: 'Insufficient balance to place stake.' });
+    }
 
-    const round = await StakingRound.create({
-      userId: user._id,
-      traderUid: user.uid,
-      traderName: user.name,
-      asset: matchedAsset?.name || asset || 'BTC/USDT',
-      stakedAmount: numAmount,
-      returnPercent: returnRate,
-      dailyInterest,
-      profit: 0, // Profit is strictly 0 until 5:00 AM distribution
-      payout: numAmount, // Principal only until 5:00 AM distribution
-      totalInterestEarned: 0,
-      daysCredited: 0,
-      lastInterestCreditedAt: null,
-      durationSeconds: duration,
-      status: 'Active',
-      time: 'Just now',
-    });
+    let round;
+    try {
+      round = await StakingRound.create({
+        userId: updatedStakeUser._id,
+        traderUid: updatedStakeUser.uid,
+        traderName: updatedStakeUser.name,
+        asset: matchedAsset?.name || asset || 'BTC/USDT',
+        stakedAmount: numAmount,
+        returnPercent: returnRate,
+        dailyInterest,
+        profit: 0,
+        payout: numAmount,
+        totalInterestEarned: 0,
+        daysCredited: 0,
+        lastInterestCreditedAt: null,
+        durationSeconds: duration,
+        status: 'Active',
+        time: 'Just now',
+      });
+    } catch (createErr) {
+      console.error('Failed to create staking round, rolling back balance:', createErr);
+      await User.findByIdAndUpdate(userId, {
+        $inc: { balance: numAmount, totalStaked: -numAmount },
+      });
+      throw createErr;
+    }
 
     return res.status(201).json({
       success: true,
       message: `Stake of ₹${numAmount.toLocaleString('en-IN')} placed on ${round.asset}!`,
       round,
-      newBalance: user.balance,
+      newBalance: updatedStakeUser.balance,
     });
   } catch (error) {
     console.error('Place stake error:', error);
@@ -120,11 +145,14 @@ export const placeStake = async (req, res) => {
   }
 };
 
-// @desc    Settle a matured round (credit +30% guaranteed return)
+// @desc    Settle a matured round (credit guaranteed return)
 // @route   POST /api/staking/settle/:id
 export const settleStake = async (req, res) => {
   try {
     const { id } = req.params;
+    const userId = (req.user._id || req.user.id).toString();
+    const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+
     const query = mongoose.isValidObjectId(id) ? { $or: [{ id }, { _id: id }] } : { id };
     const round = await StakingRound.findOne(query);
 
@@ -132,27 +160,72 @@ export const settleStake = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Staking round not found.' });
     }
 
-    if (round.status === 'Matured & Settled') {
-      return res.status(400).json({ success: false, message: 'Round has already been settled.' });
+    // Verify ownership
+    if (!isAdmin && round.userId?.toString() !== userId && round.traderUid !== req.user.uid) {
+      return res.status(403).json({ success: false, message: 'Unauthorized to settle this contract.' });
     }
 
-    // Credit payout to user balance
+    if (round.status !== 'Active') {
+      return res.status(400).json({ success: false, message: `Contract is already ${round.status}.` });
+    }
+
+    // Maturity validation
+    if (round.durationSeconds && round.createdAt) {
+      const elapsedSeconds = (Date.now() - new Date(round.createdAt).getTime()) / 1000;
+      if (elapsedSeconds < round.durationSeconds) {
+        const remaining = Math.ceil(round.durationSeconds - elapsedSeconds);
+        return res.status(400).json({
+          success: false,
+          message: `Contract has not matured yet. Please wait ${remaining} more seconds.`,
+        });
+      }
+    }
+
+    // Calculate payout without double-crediting interest already distributed daily
+    const profit = Math.round((round.stakedAmount * round.returnPercent) / 100);
+    // If daily interest was already credited directly to wallet at 5 AM, return principal only
+    const alreadyEarned = Number(round.totalInterestEarned || 0);
+    const creditToBalance = alreadyEarned > 0 ? round.stakedAmount : (round.stakedAmount + profit);
+    const profitWon = alreadyEarned > 0 ? alreadyEarned : profit;
+
+    // Atomic status update to avoid concurrent double settlements
+    const updatedRound = await StakingRound.findOneAndUpdate(
+      { _id: round._id, status: 'Active' },
+      {
+        $set: {
+          status: 'Matured & Settled',
+          profit: profitWon,
+          payout: round.stakedAmount + profitWon,
+          settledAt: new Date(),
+        },
+      },
+      { new: true }
+    );
+
+    if (!updatedRound) {
+      return res.status(400).json({ success: false, message: 'Round has already been settled or closed.' });
+    }
+
+    // Atomic credit to user balance
     const user = await User.findById(round.userId);
+    let newBalance = user?.balance;
     if (user) {
-      user.balance += round.payout;
-      user.totalWon += round.payout;
+      user.balance += creditToBalance;
+      if (alreadyEarned === 0) {
+        user.totalWon = (user.totalWon || 0) + profit;
+      }
+      if (user.totalStaked && user.totalStaked >= round.stakedAmount) {
+        user.totalStaked -= round.stakedAmount;
+      }
       await user.save();
+      newBalance = user.balance;
     }
-
-    round.status = 'Matured & Settled';
-    round.settledAt = new Date();
-    await round.save();
 
     return res.status(200).json({
       success: true,
-      message: `Round matured! ₹${round.payout.toLocaleString('en-IN')} credited to wallet.`,
-      round,
-      newBalance: user?.balance,
+      message: `Round matured! ₹${creditToBalance.toLocaleString('en-IN')} credited to wallet.`,
+      round: updatedRound,
+      newBalance,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -258,10 +331,18 @@ export const topUpStake = async (req, res) => {
       });
     }
 
-    // Deduct wallet balance & track staked
-    user.balance -= addAmt;
-    user.totalStaked = (user.totalStaked || 0) + addAmt;
-    await user.save();
+    // Atomic balance deduction to prevent race condition
+    const updatedTopUser = await User.findOneAndUpdate(
+      { _id: round.userId || userId, balance: { $gte: addAmt } },
+      { $inc: { balance: -addAmt, totalStaked: addAmt } },
+      { new: true }
+    );
+    if (!updatedTopUser) {
+      return res.status(400).json({
+        success: false,
+        message: `Insufficient wallet balance. Please recharge first.`,
+      });
+    }
 
     // Increase contract capital
     round.stakedAmount += addAmt;
@@ -275,8 +356,7 @@ export const topUpStake = async (req, res) => {
       success: true,
       message: `Successfully added ₹${addAmt.toLocaleString('en-IN')} to your ${round.asset} contract! Total Investment is now ₹${round.stakedAmount.toLocaleString('en-IN')}.`,
       round,
-      newBalance: user.balance,
-      newStakedAmount: round.stakedAmount,
+      newBalance: updatedTopUser.balance,
     });
   } catch (error) {
     console.error('Top-up contract error:', error);

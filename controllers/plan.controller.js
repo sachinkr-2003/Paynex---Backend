@@ -1,5 +1,6 @@
 import Plan from '../models/plan.model.js';
 import User from '../models/user.model.js';
+import StakingRound from '../models/stakingRound.model.js';
 
 // @desc    Get all investment plans
 // @route   GET /api/plans
@@ -25,6 +26,10 @@ export const subscribePlan = async (req, res) => {
     }
 
     const numAmount = Number(amount);
+    if (!numAmount || numAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'Please provide a valid investment amount.' });
+    }
+
     if (numAmount < plan.minAmount || numAmount > plan.maxAmount) {
       return res.status(400).json({
         success: false,
@@ -32,24 +37,45 @@ export const subscribePlan = async (req, res) => {
       });
     }
 
-    const user = await User.findById(userId);
-    if (user.balance < numAmount) {
+    // Atomic balance deduction to prevent race conditions
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, balance: { $gte: numAmount } },
+      { $inc: { balance: -numAmount, totalStaked: numAmount } },
+      { new: true }
+    );
+
+    if (!updatedUser) {
       return res.status(400).json({ success: false, message: 'Insufficient balance to subscribe.' });
     }
 
-    // Deduct capital
-    user.balance -= numAmount;
-    user.totalStaked += numAmount;
-    await user.save();
+    // Create real tracked contract for this plan subscription
+    const dailyInterest = Math.max(1, Math.round((numAmount * (plan.dailyProfit || 5)) / 100));
+    const round = await StakingRound.create({
+      userId: updatedUser._id,
+      traderUid: updatedUser.uid,
+      traderName: updatedUser.name,
+      asset: `Plan: ${plan.name}`,
+      stakedAmount: numAmount,
+      returnPercent: plan.dailyProfit || 5,
+      dailyInterest,
+      profit: 0,
+      payout: numAmount,
+      totalInterestEarned: 0,
+      daysCredited: 0,
+      durationSeconds: (plan.durationDays || 30) * 86400,
+      status: 'Active',
+      time: 'Just now',
+    });
 
-    plan.activeSubscribers += 1;
+    plan.activeSubscribers = (plan.activeSubscribers || 0) + 1;
     await plan.save();
 
     return res.status(200).json({
       success: true,
       message: `Subscribed to ${plan.name} successfully! Daily returns: +${plan.dailyProfit}%`,
-      newBalance: user.balance,
+      newBalance: updatedUser.balance,
       plan,
+      round,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

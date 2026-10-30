@@ -5,9 +5,11 @@ import { sendPasswordResetOtpEmail } from '../services/emailService.js';
 
 // Helper to generate JWT
 const generateToken = (user) => {
+  const secret = process.env.JWT_SECRET;
+  if (!secret) throw new Error('JWT_SECRET is not configured.');
   return jwt.sign(
     { id: user._id, uid: user.uid, email: user.email, role: user.role },
-    process.env.JWT_SECRET || 'paynex_crypto_jwt_secret_2026_super_secure_key',
+    secret,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
 };
@@ -117,6 +119,12 @@ export const login = async (req, res) => {
       return res.status(401).json({ success: false, message: 'Invalid credentials. Incorrect password.' });
     }
 
+    // If this is an admin panel login request, verify admin role
+    const isAdminLogin = req.headers['x-admin-login'] === 'true';
+    if (isAdminLogin && user.role !== 'admin' && user.role !== 'superadmin') {
+      return res.status(403).json({ success: false, message: 'Access denied. Administrator credentials required.' });
+    }
+
     const token = generateToken(user);
 
     return res.status(200).json({
@@ -187,16 +195,17 @@ export const updateProfile = async (req, res) => {
     if (name) user.name = name.trim();
     if (phone) user.phone = phone.trim();
 
-    // Change Login Password
+    // Change Login Password - currentPassword is mandatory
     if (password) {
       if (password.length < 6) {
         return res.status(400).json({ success: false, message: 'New login password must be at least 6 characters long.' });
       }
-      if (currentPassword) {
-        const isMatch = await user.comparePassword(currentPassword);
-        if (!isMatch) {
-          return res.status(400).json({ success: false, message: 'Current login password is incorrect.' });
-        }
+      if (!currentPassword) {
+        return res.status(400).json({ success: false, message: 'Current password is required to change your password.' });
+      }
+      const isMatch = await user.comparePassword(currentPassword);
+      if (!isMatch) {
+        return res.status(400).json({ success: false, message: 'Current login password is incorrect.' });
       }
       user.password = password;
     }
@@ -207,8 +216,14 @@ export const updateProfile = async (req, res) => {
       if (cleanWithdrawPass.length < 4) {
         return res.status(400).json({ success: false, message: 'Withdrawal password must be at least 4 digits/characters long.' });
       }
-      // If user already has a withdrawal password set and provides current PIN/password
-      if (user.withdrawalPassword && (currentWithdrawalPassword || currentPassword)) {
+      // If user already has a withdrawal password set, verification of current PIN/password is mandatory
+      if (user.withdrawalPassword) {
+        if (!currentWithdrawalPassword && !currentPassword) {
+          return res.status(400).json({
+            success: false,
+            message: 'Current login password or withdrawal PIN is required to change your withdrawal password.',
+          });
+        }
         let isPinMatch = false;
         if (currentWithdrawalPassword) {
           isPinMatch = await user.compareWithdrawalPassword(currentWithdrawalPassword.toString().trim());

@@ -24,7 +24,7 @@ const depositSchema = new mongoose.Schema(
     amount: {
       type: Number,
       required: true,
-      min: 100,
+      min: 1,
     },
     method: {
       type: String,

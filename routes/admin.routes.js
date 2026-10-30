@@ -21,26 +21,25 @@ import { protect, adminOnly } from '../middlewares/auth.middleware.js';
 
 const router = express.Router();
 
-// Allow public/demo access or protected by protect & adminOnly
-router.get('/dashboard-kpis', getDashboardKPIs);
-router.get('/users', getAllTraders);
-router.get('/traders', getAllTraders);
-router.put('/users/:id/balance', adjustUserBalance);
-router.put('/users/:id/status', updateUserStatus);
-router.put('/users/:id/reset-password', adminResetUserPassword);
+router.get('/dashboard-kpis', protect, adminOnly, getDashboardKPIs);
+router.get('/users', protect, adminOnly, getAllTraders);
+router.get('/traders', protect, adminOnly, getAllTraders);
+router.put('/users/:id/balance', protect, adminOnly, adjustUserBalance);
+router.put('/users/:id/status', protect, adminOnly, updateUserStatus);
+router.put('/users/:id/reset-password', protect, adminOnly, adminResetUserPassword);
 
-router.get('/deposits', getAllDeposits);
-router.put('/deposits/:id/approve', approveDeposit);
-router.put('/deposits/:id/reject', rejectDeposit);
+router.get('/deposits', protect, adminOnly, getAllDeposits);
+router.put('/deposits/:id/approve', protect, adminOnly, approveDeposit);
+router.put('/deposits/:id/reject', protect, adminOnly, rejectDeposit);
 
-router.get('/withdrawals', getAllWithdrawals);
-router.put('/withdrawals/:id/release', releaseWithdrawal);
-router.put('/withdrawals/:id/reject', rejectWithdrawal);
+router.get('/withdrawals', protect, adminOnly, getAllWithdrawals);
+router.put('/withdrawals/:id/release', protect, adminOnly, releaseWithdrawal);
+router.put('/withdrawals/:id/reject', protect, adminOnly, rejectWithdrawal);
 
-router.put('/engine/rate', updateEngineRate);
-router.get('/notifications', getAdminNotifications);
-router.get('/settings', getSettings);
-router.put('/settings', updateSettings);
-router.post('/distribute-daily-interest', triggerDailyInterest);
+router.put('/engine/rate', protect, adminOnly, updateEngineRate);
+router.get('/notifications', protect, adminOnly, getAdminNotifications);
+router.get('/settings', protect, adminOnly, getSettings);
+router.put('/settings', protect, adminOnly, updateSettings);
+router.post('/distribute-daily-interest', protect, adminOnly, triggerDailyInterest);
 
 export default router;

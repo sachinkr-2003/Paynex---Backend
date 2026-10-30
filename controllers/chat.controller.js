@@ -7,18 +7,15 @@ import { generateAiReply } from '../services/aiChatService.js';
 export const getMyChat = async (req, res) => {
   try {
     const user = req.user;
-    const identifier = user?._id || req.query.uid || req.query.email;
 
     let query = {};
     if (user?._id) {
-      query.user = user._id;
-    } else if (req.query.uid) {
-      query.userUid = req.query.uid;
-    } else if (req.query.email) {
-      query.userEmail = req.query.email;
+      // Authenticated user: strictly access their own chat
+      query = { $or: [{ user: user._id }, { userUid: user.uid }] };
     } else {
-      // Guest or demo session
-      query.userUid = 'GUEST-' + (req.ip || '001');
+      // Unauthenticated visitor: isolated guest thread by IP
+      const guestKey = 'GUEST-' + Buffer.from(req.ip || 'visitor').toString('hex').slice(0, 10);
+      query = { userUid: guestKey, user: null };
     }
 
     let chat = await Chat.findOne(query);
@@ -27,10 +24,10 @@ export const getMyChat = async (req, res) => {
       const initialGreeting = `Hello ${user?.name || 'Trader'}! Welcome to PAYNEX 24/7 AI Desk 🤖. How can I assist you with your account, deposits, withdrawals, or contracts today?`;
       chat = await Chat.create({
         user: user?._id || null,
-        userUid: user?.uid || req.query.uid || 'UID-' + Math.floor(100000 + Math.random() * 900000),
-        userName: user?.name || req.query.name || 'Trader',
-        userEmail: user?.email || req.query.email || 'trader@paynex.io',
-        userPhone: user?.phone || req.query.phone || '+91 98765 43210',
+        userUid: user?.uid || ('GUEST-' + Buffer.from(req.ip || 'visitor').toString('hex').slice(0, 10)),
+        userName: user?.name || 'Trader',
+        userEmail: user?.email || 'guest@paynex.io',
+        userPhone: user?.phone || '+91 98765 43210',
         subject: 'Trader Support Desk',
         status: 'Active',
         aiEnabled: true,
@@ -61,7 +58,7 @@ export const getMyChat = async (req, res) => {
 // @route   POST /api/chat/send
 export const sendMessage = async (req, res) => {
   try {
-    const { chatId, uid, email, name } = req.body;
+    const { chatId } = req.body;
     const cleanText = (req.body.text || req.body.message || '').trim();
 
     if (!cleanText) {
@@ -71,19 +68,23 @@ export const sendMessage = async (req, res) => {
     let chat;
     if (chatId) {
       chat = await Chat.findById(chatId);
+      // If chat belongs to a registered user, caller must be owner or admin
+      if (chat && chat.user && req.user?._id) {
+        const isOwner = chat.user.toString() === req.user._id.toString();
+        const isAdmin = req.user.role === 'admin' || req.user.role === 'superadmin';
+        if (!isOwner && !isAdmin) {
+          return res.status(403).json({ success: false, message: 'Unauthorized chat access.' });
+        }
+      }
     }
 
     if (!chat && req.user?._id) {
-      chat = await Chat.findOne({ user: req.user._id });
+      chat = await Chat.findOne({ $or: [{ user: req.user._id }, { userUid: req.user.uid }] });
     }
 
-    if (!chat && (uid || email)) {
-      chat = await Chat.findOne({ $or: [{ userUid: uid }, { userEmail: email }] });
-    }
-
-    const userName = req.user?.name || name || chat?.userName || 'Trader';
-    const userEmail = req.user?.email || email || chat?.userEmail || 'trader@paynex.io';
-    const userUid = req.user?.uid || uid || chat?.userUid || 'UID-' + Math.floor(100000 + Math.random() * 900000);
+    const userName = req.user?.name || chat?.userName || 'Trader';
+    const userEmail = req.user?.email || chat?.userEmail || 'guest@paynex.io';
+    const userUid = req.user?.uid || chat?.userUid || ('GUEST-' + Buffer.from(req.ip || 'visitor').toString('hex').slice(0, 10));
 
     if (!chat) {
       chat = new Chat({

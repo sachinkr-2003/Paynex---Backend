@@ -5,7 +5,7 @@ import StakingRound from '../models/stakingRound.model.js';
 import Plan from '../models/plan.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
-import { G1, G2, G3, G4, G5, getAssetGroup } from './asset.controller.js';
+import { G1, G2, G3, G4, G5, DEFAULT_GROUP_INTEREST, getAssetGroup } from './asset.controller.js';
 import { distributeDailyInterest } from '../services/interestScheduler.js';
 
 // @desc    Get complete Master Dashboard KPIs
@@ -285,25 +285,21 @@ export const approveDeposit = async (req, res) => {
     if (/^[0-9a-fA-F]{24}$/.test(id)) {
       queryConditions.push({ _id: id });
     }
-    const deposit = await Deposit.findOne({ $or: queryConditions });
+    // Atomic status update to prevent double credit race condition
+    const deposit = await Deposit.findOneAndUpdate(
+      { $or: queryConditions, status: { $nin: ['Approved', 'Success', 'Failed', 'Expired'] } },
+      { $set: { status: 'Approved' } },
+      { new: true }
+    );
 
     if (!deposit) {
-      return res.status(404).json({ success: false, message: 'Deposit record not found.' });
-    }
-
-    if (deposit.status === 'Approved' || deposit.status === 'Success') {
+      const existing = await Deposit.findOne({ $or: queryConditions });
+      if (!existing) return res.status(404).json({ success: false, message: 'Deposit record not found.' });
+      if (existing.status === 'Failed' || existing.status === 'Expired') {
+        return res.status(400).json({ success: false, message: 'Security Alert: This deposit was rejected by the banking switch and cannot be approved.' });
+      }
       return res.status(400).json({ success: false, message: 'Deposit has already been approved.' });
     }
-
-    if (deposit.status === 'Failed' || deposit.status === 'Expired') {
-      return res.status(400).json({
-        success: false,
-        message: 'Security Alert: This deposit was rejected by the banking switch and cannot be approved.',
-      });
-    }
-
-    deposit.status = 'Approved';
-    await deposit.save();
 
     // Auto credit to trader wallet balance or activate stock contract
     const user = await User.findById(deposit.userId);
@@ -336,11 +332,17 @@ export const approveDeposit = async (req, res) => {
             $or: [{ id: targetStock }, { symbol: targetStock.toUpperCase() }, { name: targetStock }]
           });
           const settings = await Setting.findOne({ key: 'main_config' });
-          const grp = getAssetGroup(matchedAsset);
-          const groupRate = (settings?.groupInterestRates && settings.groupInterestRates[grp] !== undefined && settings.groupInterestRates[grp] !== null)
-            ? Number(settings.groupInterestRates[grp])
-            : null;
-          const returnRate = Math.min(12, Math.max(2, groupRate ?? matchedAsset?.returnPercent ?? settings?.defaultGameProfitPercent ?? 5));
+          const grp = getAssetGroup(matchedAsset || { symbol: targetStock });
+          const groupRates = {
+            ...DEFAULT_GROUP_INTEREST,
+            ...(settings?.groupInterestRates || {}),
+          };
+          const rawGroupRate = (groupRates[grp] !== undefined && groupRates[grp] !== null)
+            ? Number(groupRates[grp])
+            : (groupRates[String(grp)] !== undefined && groupRates[String(grp)] !== null)
+              ? Number(groupRates[String(grp)])
+              : (matchedAsset?.returnPercent || DEFAULT_GROUP_INTEREST[grp] || 5);
+          const returnRate = Math.max(1, rawGroupRate);
           const profit = Math.round((deposit.amount * returnRate) / 100);
           const payout = deposit.amount + profit;
           const dailyInterest = Math.max(1, Math.round((deposit.amount * returnRate) / 100));
@@ -494,20 +496,24 @@ export const releaseWithdrawal = async (req, res) => {
     if (/^[0-9a-fA-F]{24}$/.test(id)) {
       queryConditions.push({ _id: id });
     }
-    const withdrawal = await Withdrawal.findOne({ $or: queryConditions });
-
-    if (!withdrawal) {
-      return res.status(404).json({ success: false, message: 'Withdrawal not found.' });
-    }
-
-    if (withdrawal.status === 'Completed') {
-      return res.status(400).json({ success: false, message: 'Withdrawal is already completed.' });
-    }
 
     const generatedImps = req.body?.impsRef || `IMPS${Date.now().toString().slice(-8)}`;
-    withdrawal.status = 'Completed';
-    withdrawal.impsRef = generatedImps;
-    await withdrawal.save();
+
+    // Atomic update from Pending to Completed
+    const withdrawal = await Withdrawal.findOneAndUpdate(
+      { $or: queryConditions, status: 'Pending' },
+      { $set: { status: 'Completed', impsRef: generatedImps } },
+      { new: true }
+    );
+
+    if (!withdrawal) {
+      const existing = await Withdrawal.findOne({ $or: queryConditions });
+      if (!existing) return res.status(404).json({ success: false, message: 'Withdrawal not found.' });
+      return res.status(400).json({
+        success: false,
+        message: `Withdrawal cannot be released because it is already marked as "${existing.status}".`,
+      });
+    }
 
     return res.status(200).json({
       success: true,
@@ -528,16 +534,24 @@ export const rejectWithdrawal = async (req, res) => {
     if (/^[0-9a-fA-F]{24}$/.test(id)) {
       queryConditions.push({ _id: id });
     }
-    const withdrawal = await Withdrawal.findOne({ $or: queryConditions });
+
+    // Atomic status transition from Pending to Rejected to prevent multiple refunds
+    const withdrawal = await Withdrawal.findOneAndUpdate(
+      { $or: queryConditions, status: 'Pending' },
+      { $set: { status: 'Rejected', rejectionReason: req.body?.reason || 'Declined by Administrator' } },
+      { new: true }
+    );
 
     if (!withdrawal) {
-      return res.status(404).json({ success: false, message: 'Withdrawal not found.' });
+      const existing = await Withdrawal.findOne({ $or: queryConditions });
+      if (!existing) return res.status(404).json({ success: false, message: 'Withdrawal not found.' });
+      return res.status(400).json({
+        success: false,
+        message: `Withdrawal cannot be rejected because it is already "${existing.status}".`,
+      });
     }
 
-    withdrawal.status = 'Rejected';
-    await withdrawal.save();
-
-    // Refund funds back to user wallet
+    // Refund funds back to user wallet safely (once only)
     const user = await User.findById(withdrawal.userId);
     if (user) {
       user.balance += withdrawal.amount;
@@ -561,24 +575,44 @@ export const updateEngineRate = async (req, res) => {
   try {
     const { rate, profitPercent } = req.body;
     const rawNum = Number(rate ?? profitPercent);
-    const numRate = Math.min(12, Math.max(2, rawNum || 12));
+    const numRate = Math.min(100, Math.max(1, rawNum || 5));
 
     let settings = await Setting.findOne({ key: 'main_config' });
     if (!settings) {
-      settings = await Setting.create({ defaultGameProfitPercent: numRate });
+      settings = await Setting.create({
+        defaultGameProfitPercent: numRate,
+        groupInterestRates: { ...DEFAULT_GROUP_INTEREST },
+      });
     } else {
       settings.defaultGameProfitPercent = numRate;
+      if (!settings.groupInterestRates) {
+        settings.groupInterestRates = { ...DEFAULT_GROUP_INTEREST };
+      }
       await settings.save();
     }
 
-    // Also update all assets in MongoDB so they inherit the new Admin rate immediately
-    await Asset.updateMany({}, { $set: { returnPercent: numRate } });
+    // Preserve and synchronize each group's distinct return rate across MongoDB assets
+    const currentRates = {
+      ...DEFAULT_GROUP_INTEREST,
+      ...(settings?.groupInterestRates || {}),
+    };
+    const groupsList = [G1, G2, G3, G4, G5];
+    for (let g = 1; g <= 5; g++) {
+      const gRate = Number(currentRates[g] ?? currentRates[String(g)] ?? DEFAULT_GROUP_INTEREST[g]);
+      const syms = groupsList[g - 1] || [];
+      const symsLower = syms.map((s) => s.toLowerCase());
+      await Asset.updateMany(
+        { $or: [{ group: g }, { symbol: { $in: [...syms, ...symsLower] } }, { id: { $in: [...syms, ...symsLower] } }] },
+        { $set: { returnPercent: gRate, group: g } }
+      );
+    }
 
     return res.status(200).json({
       success: true,
-      message: `⚡ Staking Return Engine rate updated to +${numRate}% Guaranteed!`,
+      message: `⚡ Staking Return Engine default rate updated to +${numRate}%!`,
       rate: numRate,
       returnPercent: numRate,
+      groupInterestRates: currentRates,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -591,7 +625,9 @@ export const getSettings = async (req, res) => {
   try {
     let settings = await Setting.findOne({ key: 'main_config' });
     if (!settings) {
-      settings = await Setting.create({});
+      settings = await Setting.create({
+        groupInterestRates: { ...DEFAULT_GROUP_INTEREST },
+      });
     }
     return res.status(200).json({ success: true, settings });
   } catch (error) {
@@ -607,23 +643,20 @@ export const updateSettings = async (req, res) => {
       upsert: true,
     });
 
-    // If defaultGameProfitPercent updated, sync all assets in MongoDB
-    if (updates.defaultGameProfitPercent) {
-      const cleanRate = Math.min(12, Math.max(2, Number(updates.defaultGameProfitPercent) || 12));
-      await Asset.updateMany({}, { $set: { returnPercent: cleanRate } });
-    }
-
-    // If groupInterestRates updated, sync group assets in MongoDB
+    // If groupInterestRates updated, sync each group's assets independently in MongoDB
     if (updates.groupInterestRates && typeof updates.groupInterestRates === 'object') {
       const groupsList = [G1, G2, G3, G4, G5];
       for (const [grp, val] of Object.entries(updates.groupInterestRates)) {
         const gNum = Number(grp);
-        const cleanRate = Math.min(12, Math.max(2, Number(val) || 5));
-        const syms = groupsList[gNum - 1] || [];
-        await Asset.updateMany(
-          { $or: [{ group: gNum }, { symbol: { $in: syms } }, { id: { $in: syms } }] },
-          { $set: { returnPercent: cleanRate, group: gNum } }
-        );
+        if (gNum >= 1 && gNum <= 5) {
+          const cleanRate = Math.max(1, Number(val) || DEFAULT_GROUP_INTEREST[gNum] || 5);
+          const syms = groupsList[gNum - 1] || [];
+          const symsLower = syms.map((s) => s.toLowerCase());
+          await Asset.updateMany(
+            { $or: [{ group: gNum }, { symbol: { $in: [...syms, ...symsLower] } }, { id: { $in: [...syms, ...symsLower] } }] },
+            { $set: { returnPercent: cleanRate, group: gNum } }
+          );
+        }
       }
     }
 
@@ -687,8 +720,7 @@ export const adminResetUserPassword = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Password for ${user.name} (${user.uid}) has been reset to: ${cleanPassword}`,
-      newPassword: cleanPassword,
+      message: `Password for ${user.name} (${user.uid}) has been reset successfully.`,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });

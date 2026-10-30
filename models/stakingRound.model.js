@@ -29,7 +29,7 @@ const stakingRoundSchema = new mongoose.Schema(
     stakedAmount: {
       type: Number,
       required: true,
-      min: 100,
+      min: 1,
     },
     returnPercent: {
       type: Number,

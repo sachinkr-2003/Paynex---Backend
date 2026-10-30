@@ -143,8 +143,8 @@ export async function checkAndCatchUpDailyInterest() {
     }).format(now);
     const istHour = parseInt(istHourStr, 10);
 
-    // If it's 5:00 AM or later in IST, run non-forced catch-up
-    if (istHour >= 5) {
+    // Only run catch-up between 5 AM and 7 AM IST to avoid unnecessary runs all day
+    if (istHour >= 5 && istHour <= 7) {
       console.log(`[5 AM Catch-Up] Current IST Hour is ${istHour}:00 (>= 5 AM). Checking for uncredited contracts...`);
       await distributeDailyInterest({ force: false });
     }

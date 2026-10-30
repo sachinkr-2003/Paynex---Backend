@@ -6,38 +6,24 @@ const protect = async (req, res, next) => {
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
       token = req.headers.authorization.split(' ')[1];
-      const secret = process.env.JWT_SECRET || 'paynex_crypto_jwt_secret_2026_super_secure_key';
+      const secret = process.env.JWT_SECRET;
+      if (!secret) {
+        return res.status(500).json({ success: false, message: 'Server configuration error.' });
+      }
       const decoded = jwt.verify(token, secret);
       const User = (await import('../models/user.model.js')).default;
       const userDoc = await User.findById(decoded.id).select('-password');
-      if (userDoc) {
-        req.user = userDoc;
-        return next();
+      if (!userDoc) {
+        return res.status(401).json({ success: false, message: 'User account not found or removed.' });
       }
-      req.user = decoded;
+      if (userDoc.isBanned) {
+        return res.status(403).json({ success: false, message: 'Your account has been suspended by administration.' });
+      }
+      req.user = userDoc;
       return next();
     } catch (error) {
-      console.warn('JWT verification notice in protect middleware:', error.message);
-    }
-  }
-
-  // Graceful fallback for admin session if request comes from admin panel
-  const isAdminRoute = req.originalUrl && req.originalUrl.includes('/admin');
-  if (isAdminRoute) {
-    try {
-      const User = (await import('../models/user.model.js')).default;
-      const adminUser = await User.findOne({ role: 'admin' });
-      if (adminUser) {
-        req.user = {
-          id: adminUser._id,
-          uid: adminUser.uid,
-          email: adminUser.email,
-          role: 'admin',
-        };
-        return next();
-      }
-    } catch (err) {
-      console.error('Fallback admin lookup error:', err);
+      console.warn('JWT verification failed:', error.message);
+      return res.status(401).json({ success: false, message: 'Not authorized, invalid token.' });
     }
   }
 
@@ -45,10 +31,10 @@ const protect = async (req, res, next) => {
 };
 
 const adminOnly = (req, res, next) => {
-  if (req.user && req.user.role === 'admin') {
+  if (req.user && (req.user.role === 'admin' || req.user.role === 'superadmin')) {
     next();
   } else {
-    res.status(403).json({ message: 'Access denied: Admins only' });
+    res.status(403).json({ success: false, message: 'Access denied: Admins only' });
   }
 };
 
@@ -56,14 +42,16 @@ const optionalProtect = async (req, res, next) => {
   if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
     try {
       const token = req.headers.authorization.split(' ')[1];
-      const secret = process.env.JWT_SECRET || 'paynex_crypto_jwt_secret_2026_super_secure_key';
-      const decoded = jwt.verify(token, secret);
-      const User = (await import('../models/user.model.js')).default;
-      const userDoc = await User.findById(decoded.id).select('-password');
-      if (userDoc) {
-        req.user = userDoc;
-      } else {
-        req.user = decoded;
+      const secret = process.env.JWT_SECRET;
+      if (secret) {
+        const decoded = jwt.verify(token, secret);
+        const User = (await import('../models/user.model.js')).default;
+        const userDoc = await User.findById(decoded.id).select('-password');
+        if (userDoc) {
+          req.user = userDoc;
+        } else {
+          req.user = decoded;
+        }
       }
     } catch (_) {}
   }

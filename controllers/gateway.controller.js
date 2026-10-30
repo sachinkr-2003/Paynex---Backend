@@ -3,7 +3,8 @@ import Deposit from '../models/deposit.model.js';
 import User from '../models/user.model.js';
 import Setting from '../models/setting.model.js';
 import Asset from '../models/asset.model.js';
-import { getAssetGroup } from './asset.controller.js';
+import StakingRound from '../models/stakingRound.model.js';
+import { getAssetGroup, DEFAULT_GROUP_INTEREST } from './asset.controller.js';
 import { verifyBankPayment } from '../utils/paymentVerifier.js';
 
 // @desc    Initiate new UPI Payment Gateway Order (10-min countdown session)
@@ -126,8 +127,8 @@ export const getGatewayOrder = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Gateway order not found.' });
     }
 
-    // Auto-expire if 10 minutes exceeded and status is still Pending
-    if (order.status === 'Pending' && new Date() > order.expiresAt) {
+    // Auto-expire if 10 minutes exceeded and status is still Pending or Initiated
+    if (['Pending', 'Initiated'].includes(order.status) && new Date() > order.expiresAt) {
       order.status = 'Expired';
       await order.save();
       await Deposit.findOneAndUpdate({ id: transactionId }, { status: 'Expired' });
@@ -327,36 +328,89 @@ export const getAdminGatewayOrders = async (req, res) => {
   }
 };
 
-// @desc    Admin: Approve Gateway Order and credit trader wallet
+// @desc    Admin: Approve Gateway Order and credit trader wallet or activate stock contract
 // @route   PUT /api/gateway/admin/orders/:transactionId/approve
 export const approveGatewayOrder = async (req, res) => {
   try {
     const { transactionId } = req.params;
 
-    const order = await GatewayOrder.findOne({
-      $or: [{ transactionId }, { id: transactionId }, { _id: transactionId.match(/^[0-9a-fA-F]{24}$/) ? transactionId : null }],
-    });
+    const queryConditions = [
+      { transactionId },
+      { id: transactionId },
+      ...(transactionId.match(/^[0-9a-fA-F]{24}$/) ? [{ _id: transactionId }] : []),
+    ];
+
+    // Atomic status update to prevent race conditions
+    const order = await GatewayOrder.findOneAndUpdate(
+      { $or: queryConditions, status: { $ne: 'Success' } },
+      { $set: { status: 'Success', verifiedAt: new Date() } },
+      { new: true }
+    );
 
     if (!order) {
-      return res.status(404).json({ success: false, message: 'Gateway order not found.' });
-    }
-
-    if (order.status === 'Success') {
+      const existing = await GatewayOrder.findOne({ $or: queryConditions });
+      if (!existing) return res.status(404).json({ success: false, message: 'Gateway order not found.' });
       return res.status(400).json({ success: false, message: 'Order has already been approved.' });
     }
 
-    order.status = 'Success';
-    order.verifiedAt = new Date();
-    await order.save();
-
-    // Auto-credit User Wallet
     const user = await User.findById(order.userId);
+    let creditedAsStock = false;
+
     if (user) {
-      user.balance += order.amount;
-      await user.save();
+      user.hasDeposited = true;
+
+      // Check if order was for a stock purchase
+      const targetStock = order.companyId || (order.companyName && order.companyName !== 'Paynex Trading Desk' ? order.companyName : null);
+      if (targetStock) {
+        try {
+          const matchedAsset = await Asset.findOne({
+            $or: [{ id: targetStock }, { symbol: targetStock.toUpperCase() }, { name: targetStock }],
+          });
+          const settings = await Setting.findOne({ key: 'main_config' });
+          const grp = getAssetGroup(matchedAsset || { symbol: targetStock });
+          const groupRates = {
+            ...DEFAULT_GROUP_INTEREST,
+            ...(settings?.groupInterestRates || {}),
+          };
+          const rawGroupRate = (groupRates[grp] !== undefined && groupRates[grp] !== null)
+            ? Number(groupRates[grp])
+            : (groupRates[String(grp)] !== undefined && groupRates[String(grp)] !== null)
+              ? Number(groupRates[String(grp)])
+              : (matchedAsset?.returnPercent || DEFAULT_GROUP_INTEREST[grp] || 5);
+          const returnRate = Math.max(1, rawGroupRate);
+          const dailyInterest = Math.max(1, Math.round((order.amount * returnRate) / 100));
+
+          await StakingRound.create({
+            userId: user._id,
+            traderUid: user.uid,
+            traderName: user.name,
+            asset: matchedAsset?.symbol || targetStock,
+            stakedAmount: order.amount,
+            returnPercent: returnRate,
+            profit: 0,
+            payout: order.amount,
+            dailyInterest,
+            totalInterestEarned: 0,
+            daysCredited: 0,
+            durationSeconds: 30,
+            status: 'Active',
+            startTime: new Date(),
+          });
+          user.totalStaked = (user.totalStaked || 0) + order.amount;
+          await user.save();
+          creditedAsStock = true;
+        } catch (stkErr) {
+          console.warn('Auto stock activation in gateway order notice:', stkErr.message);
+        }
+      }
+
+      if (!creditedAsStock) {
+        user.balance += order.amount;
+        await user.save();
+      }
     }
 
-    // Sync to Deposit collection
+    // Two-way sync to Deposit collection
     await Deposit.findOneAndUpdate(
       { $or: [{ id: order.transactionId }, { id: transactionId }] },
       { status: 'Approved' }
@@ -364,7 +418,9 @@ export const approveGatewayOrder = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      message: `Payment of ₹${order.amount.toLocaleString('en-IN')} approved! Balance credited to ${order.traderName}.`,
+      message: creditedAsStock
+        ? `Payment of ₹${order.amount.toLocaleString('en-IN')} approved! Active Stock Contract created for ${order.traderName}.`
+        : `Payment of ₹${order.amount.toLocaleString('en-IN')} approved! Wallet balance credited to ${order.traderName}.`,
       order,
       newBalance: user?.balance,
     });

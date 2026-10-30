@@ -1,0 +1,6 @@
+◇ injected env (14) from .env
+🚀 PAYNEX Backend Server running on http://localhost:5000
+✅ MongoDB Connected to Atlas Host: ac-pib0vm3-shard-00-02.d4trb33.mongodb.net
+✅ Active Database Name: paynex
+✅ Synchronized 100% uniform Group Interest Rates (2%-12%) for all companies
+⚡ [Scheduler Initialized] 5:00 AM IST Automated Daily Stock Interest Engine is ACTIVE (Asia/Kolkata).

@@ -17,8 +17,8 @@ router.get('/orders/:transactionId', getGatewayOrder);
 router.post('/orders/:transactionId/submit-utr', submitOrderUtr);
 
 // Admin Gateway Review Queue
-router.get('/admin/orders', getAdminGatewayOrders);
-router.put('/admin/orders/:transactionId/approve', approveGatewayOrder);
-router.put('/admin/orders/:transactionId/reject', rejectGatewayOrder);
+router.get('/admin/orders', protect, adminOnly, getAdminGatewayOrders);
+router.put('/admin/orders/:transactionId/approve', protect, adminOnly, approveGatewayOrder);
+router.put('/admin/orders/:transactionId/reject', protect, adminOnly, rejectGatewayOrder);
 
 export default router;

@@ -107,8 +107,13 @@ async function testEndToEndFlow() {
       },
       body: JSON.stringify({
         amount: 13000,
-        method: "UPI",
-        upiId: "rahul@okhdfcbank"
+        method: "BANK",
+        destinationType: "Bank Account",
+        password: "trader123",
+        accountNumber: "918237461298",
+        ifsc: "HDFC0001234",
+        bankName: "HDFC Bank",
+        accountHolder: "Rahul Sharma"
       })
     });
     const withdrawData = await withdrawRes.json();

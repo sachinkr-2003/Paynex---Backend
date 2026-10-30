@@ -139,27 +139,28 @@ export const seedDatabase = async () => {
       console.log(`✅ Seeded and synchronized ${initialAssetsList.length} Stock & Crypto game assets with interest rates`);
     }
 
-    // 8. Enforce 100% Uniform Group Interest Rate across all assets in MongoDB
+    // 8. Enforce Distinct Group Interest Rate across all assets in MongoDB
     const currentRates = {
       ...DEFAULT_GROUP_INTEREST,
       ...(setting?.groupInterestRates || {}),
     };
     const groupsList = [G1, G2, G3, G4, G5];
     for (let g = 1; g <= 5; g++) {
-      const gRate = Math.min(12, Math.max(2, Number(currentRates[g]) || DEFAULT_GROUP_INTEREST[g] || 5));
+      const gRate = Number(currentRates[g] ?? currentRates[String(g)] ?? DEFAULT_GROUP_INTEREST[g] ?? 5);
       const syms = groupsList[g - 1] || [];
+      const symsLower = syms.map((s) => s.toLowerCase());
       await Asset.updateMany(
         {
           $or: [
             { group: g },
-            { symbol: { $in: syms } },
-            { id: { $in: syms } },
+            { symbol: { $in: [...syms, ...symsLower] } },
+            { id: { $in: [...syms, ...symsLower] } },
           ],
         },
         { $set: { returnPercent: gRate, group: g } }
       );
     }
-    console.log('✅ Synchronized 100% uniform Group Interest Rates (2%-12%) for all companies');
+    console.log('✅ Synchronized distinct Group Interest Rates for all 5 company groups');
   } catch (error) {
     console.error('Seeding error:', error.message);
   }

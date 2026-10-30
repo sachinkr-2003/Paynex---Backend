@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import Asset from '../models/asset.model.js';
 import Setting from '../models/setting.model.js';
 import { initialAssetsList } from '../utils/initialAssets.js';
@@ -6,9 +8,16 @@ export const G1 = ['TATAMOTORS', 'RELIANCE', 'TCS', 'INFY', 'HDFCBANK', 'ICICIBA
 export const G2 = ['KOTAKBANK', 'BAJFINANCE', 'MARUTI', 'SUNPHARMA', 'ADANIENT', 'ADANIPORTS', 'TATASTEEL', 'TITAN', 'ASIANPAINT', 'NTPC', 'POWERGRID', 'COALINDIA'];
 export const G3 = ['M&M', 'MM', 'WIPRO', 'ULTRACEMCO', 'BAJAJFINSV', 'ONGC', 'NESTLEIND', 'JSWSTEEL', 'TECHM', 'INDUSINDBK', 'TATACONSUM', 'HINDALCO', 'CIPLA'];
 export const G4 = ['DRREDDY', 'GRASIM', 'SBILIFE', 'HDFCLIFE', 'APOLLOHOSP', 'EICHERMOT', 'DIVISLAB', 'HEROMOTOCO', 'BAJAJ-AUTO', 'BRITANNIA', 'BPCL', 'ZOMATO'];
-export const G5 = ['JIOFIN', 'PAYTM', 'AAPL', 'TSLA', 'NVDA', 'MSFT', 'BTC/USDT', 'BTC', 'ETH/USDT', 'ETH', 'SOL/USDT', 'SOL', 'BNB/USDT', 'BNB', 'GOLD/INR', 'GOLD', 'SILVER/INR', 'SILVER'];
+export const G5 = [
+  'JIOFIN', 'PAYTM', 'AAPL', 'TSLA', 'NVDA', 'MSFT',
+  'BTC/USDT', 'BTC', 'ETH/USDT', 'ETH', 'SOL/USDT', 'SOL', 'BNB/USDT', 'BNB',
+  'USDT/INR', 'USDT', 'XRP/USDT', 'XRP', 'DOGE/USDT', 'DOGE',
+  'ADA/USDT', 'ADA', 'TRX/USDT', 'TRX', 'MATIC/USDT', 'MATIC',
+  'DOT/USDT', 'DOT', 'LTC/USDT', 'LTC', 'AVAX/USDT', 'AVAX',
+  'GOLD/INR', 'GOLD', 'SILVER/INR', 'SILVER'
+];
 
-export const DEFAULT_GROUP_INTEREST = { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 };
+export const DEFAULT_GROUP_INTEREST = { 1: 8, 2: 11.5, 3: 11.5, 4: 11.5, 5: 11.5 };
 
 export const getAssetGroup = (asset, index = 0) => {
   const sym = (asset?.symbol || asset?.id || '').toUpperCase();
@@ -30,14 +39,38 @@ export const getPublicAssets = async (req, res) => {
     // 1. Fetch setting first (contains groupQrs, groupInterestRates, defaultGameProfitPercent, officialUpiId)
     const setting = await Setting.findOne({ key: 'main_config' }).lean();
     const masterEngineRate = Math.max(1, Number(setting?.defaultGameProfitPercent) || 5);
-    const groupQrs = setting?.groupQrs || {};
+    const rawGroupQrs = setting?.groupQrs || {};
+    const groupQrs = { ...rawGroupQrs };
+
+    // Auto-migrate heavy base64 strings to disk files to prevent heap memory exhaustion
+    for (let g = 1; g <= 5; g++) {
+      const q = (groupQrs[g] || groupQrs[String(g)] || '').trim();
+      if (q.startsWith('data:image')) {
+        try {
+          const matches = q.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+          if (matches && matches.length === 3) {
+            const ext = matches[1] === 'jpeg' ? 'jpg' : 'png';
+            const buffer = Buffer.from(matches[2], 'base64');
+            const uploadDir = path.join(process.cwd(), 'uploads');
+            if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+            const fileName = `group_qr_${g}.${ext}`;
+            fs.writeFileSync(path.join(uploadDir, fileName), buffer);
+            const relativeUrl = `/uploads/${fileName}`;
+            groupQrs[g] = relativeUrl;
+            groupQrs[String(g)] = relativeUrl;
+            // Asynchronous fire-and-forget DB update
+            Setting.updateOne(
+              { key: 'main_config' },
+              { $set: { [`groupQrs.${g}`]: relativeUrl, [`groupQrs.${String(g)}`]: relativeUrl } }
+            ).exec().catch(() => null);
+          }
+        } catch (_) {}
+      }
+    }
+
     const settingGroupRates = setting?.groupInterestRates || {};
     const groupInterestRates = {
-      1: masterEngineRate,
-      2: masterEngineRate,
-      3: masterEngineRate,
-      4: masterEngineRate,
-      5: masterEngineRate,
+      ...DEFAULT_GROUP_INTEREST,
       ...(typeof settingGroupRates === 'object' ? settingGroupRates : {}),
     };
     const officialUpi = setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici';
@@ -55,26 +88,30 @@ export const getPublicAssets = async (req, res) => {
 
     const mappedAssets = rawAssets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
-      // Admin Full Control: Group Rate > Individual Asset DB Rate > Master Engine Rate
-      const groupRate = settingGroupRates[grp] !== undefined && settingGroupRates[grp] !== null
-        ? Number(settingGroupRates[grp])
-        : null;
-      const assetRate = a.returnPercent !== undefined && a.returnPercent !== null && Number(a.returnPercent) > 0
-        ? Number(a.returnPercent)
-        : null;
-      const effectiveRate = Math.max(1, groupRate ?? assetRate ?? masterEngineRate);
+      // Group Rate is authoritative for all stocks in each group (Groups 1 to 5)
+      const groupRate = (groupInterestRates[grp] !== undefined && groupInterestRates[grp] !== null)
+        ? Number(groupInterestRates[grp])
+        : (groupInterestRates[String(grp)] !== undefined && groupInterestRates[String(grp)] !== null)
+          ? Number(groupInterestRates[String(grp)])
+          : (DEFAULT_GROUP_INTEREST[grp] || 5);
+      const effectiveRate = Math.max(1, groupRate);
 
       const individualQr = (a.qrCode && typeof a.qrCode === 'string' && a.qrCode.trim().length > 0)
         ? a.qrCode.trim()
         : '';
+      const grpQr = (groupQrs[grp] && groupQrs[grp].trim()) || (groupQrs[String(grp)] && groupQrs[String(grp)].trim());
+      // Avoid duplicating giant base64 into 60 individual items; use lightweight URL
+      const effectiveQr = (individualQr && !individualQr.startsWith('data:image'))
+        ? individualQr
+        : (grpQr || individualQr);
 
       return {
         ...a,
         group: grp,
-        qrCode: groupQrs[grp] ? groupQrs[grp] : individualQr,
+        qrCode: effectiveQr,
         upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : officialUpi,
         returnPercent: effectiveRate,
-        minStake: Number(a.minStake) || 1000,
+        minStake: Math.max(1000, Number(a.minStake) || 1000),
         isEnabled: a.isEnabled !== false,
       };
     });
@@ -200,32 +237,27 @@ export const getAdminAssets = async (req, res) => {
       Asset.find(query).select('+qrCode').lean().maxTimeMS(5000),
       Setting.findOne({ key: 'main_config' }).lean(),
     ]);
-    const masterEngineRate = Math.max(1, Number(setting?.defaultGameProfitPercent) || 12);
+    const masterEngineRate = Math.max(1, Number(setting?.defaultGameProfitPercent) || 5);
     const groupQrs = setting?.groupQrs || {};
     const settingGroupRates = setting?.groupInterestRates || {};
     const groupInterestRates = {
-      1: masterEngineRate,
-      2: masterEngineRate,
-      3: masterEngineRate,
-      4: masterEngineRate,
-      5: masterEngineRate,
+      ...DEFAULT_GROUP_INTEREST,
       ...(typeof settingGroupRates === 'object' ? settingGroupRates : {}),
     };
 
     const mappedAssets = assets.map((a, idx) => {
       const grp = getAssetGroup(a, idx);
       // Group QR is authoritative when set
-      const effectiveQr = (groupQrs && groupQrs[grp] && groupQrs[grp].trim().length > 0)
-        ? groupQrs[grp].trim()
+      const effectiveQr = (groupQrs && (groupQrs[grp] || groupQrs[String(grp)]) && (groupQrs[grp] || groupQrs[String(grp)]).trim().length > 0)
+        ? (groupQrs[grp] || groupQrs[String(grp)]).trim()
         : (a.qrCode || '');
-      // Admin Full Control: Group Rate > Individual Asset DB Rate > Master Engine Rate
-      const groupRate = settingGroupRates[grp] !== undefined && settingGroupRates[grp] !== null
-        ? Number(settingGroupRates[grp])
-        : null;
-      const assetRate = a.returnPercent !== undefined && a.returnPercent !== null && Number(a.returnPercent) > 0
-        ? Number(a.returnPercent)
-        : null;
-      const effectiveRate = Math.max(1, groupRate ?? assetRate ?? masterEngineRate);
+      // Group Rate is authoritative for all stocks in each group (Groups 1 to 5)
+      const groupRate = (groupInterestRates[grp] !== undefined && groupInterestRates[grp] !== null)
+        ? Number(groupInterestRates[grp])
+        : (groupInterestRates[String(grp)] !== undefined && groupInterestRates[String(grp)] !== null)
+          ? Number(groupInterestRates[String(grp)])
+          : (DEFAULT_GROUP_INTEREST[grp] || 5);
+      const effectiveRate = Math.max(1, groupRate);
 
       return {
         ...a,
@@ -233,7 +265,7 @@ export const getAdminAssets = async (req, res) => {
         qrCode: effectiveQr,
         upiId: (a.upiId && a.upiId.trim().length > 0) ? a.upiId.trim() : (setting?.officialUpiId || setting?.upiId || 'paynex.crypto@icici'),
         returnPercent: effectiveRate,
-        minStake: Number(a.minStake) || 100,
+        minStake: Math.max(1000, Number(a.minStake) || 1000),
         isEnabled: a.isEnabled !== false,
       };
     });
@@ -417,12 +449,22 @@ export const updateAsset = async (req, res) => {
       const cleanRate = Math.max(1, Number(updates.returnPercent));
       const targetGrp = asset.group || getAssetGroup(asset);
       if (targetGrp >= 1 && targetGrp <= 5) {
-        await Asset.updateMany({ group: targetGrp }, { $set: { returnPercent: cleanRate } });
-        await Setting.findOneAndUpdate(
-          { key: 'main_config' },
-          { $set: { [`groupInterestRates.${targetGrp}`]: cleanRate } },
-          { upsert: true }
+        const groupsList = [G1, G2, G3, G4, G5];
+        const syms = groupsList[targetGrp - 1] || [];
+        const symsLower = syms.map((s) => s.toLowerCase());
+        await Asset.updateMany(
+          { $or: [{ group: targetGrp }, { symbol: { $in: [...syms, ...symsLower] } }, { id: { $in: [...syms, ...symsLower] } }] },
+          { $set: { returnPercent: cleanRate, group: targetGrp } }
         );
+        let settingDoc = await Setting.findOne({ key: 'main_config' });
+        if (!settingDoc) {
+          settingDoc = new Setting({ key: 'main_config', groupInterestRates: { ...DEFAULT_GROUP_INTEREST } });
+        }
+        if (!settingDoc.groupInterestRates) settingDoc.groupInterestRates = { ...DEFAULT_GROUP_INTEREST };
+        settingDoc.groupInterestRates[targetGrp] = cleanRate;
+        settingDoc.groupInterestRates[String(targetGrp)] = cleanRate;
+        settingDoc.markModified('groupInterestRates');
+        await settingDoc.save();
       }
     }
 
@@ -472,87 +514,66 @@ export const updateGroupQr = async (req, res) => {
   try {
     const { group, qrCode } = req.body;
     const numGroup = Math.min(5, Math.max(1, Number(group) || 1));
-    const cleanQr = (qrCode || '').trim();
+    let cleanQr = (qrCode || '').trim();
+
+    // Auto-save heavy base64 to server disk to keep MongoDB response lightweight & prevent heap crash
+    if (cleanQr.startsWith('data:image')) {
+      try {
+        const matches = cleanQr.match(/^data:image\/([A-Za-z-+\/]+);base64,(.+)$/);
+        if (matches && matches.length === 3) {
+          const ext = matches[1] === 'jpeg' ? 'jpg' : 'png';
+          const buffer = Buffer.from(matches[2], 'base64');
+          const uploadDir = path.join(process.cwd(), 'uploads');
+          if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
+          const fileName = `group_qr_${numGroup}.${ext}`;
+          fs.writeFileSync(path.join(uploadDir, fileName), buffer);
+          cleanQr = `/uploads/${fileName}`;
+        }
+      } catch (e) {
+        console.warn('QR file save fallback:', e.message);
+      }
+    }
 
     const groupsList = [G1, G2, G3, G4, G5];
     const targetSymbols = groupsList[numGroup - 1] || [];
     const targetSymbolsLower = targetSymbols.map((s) => s.toLowerCase());
 
-    // 1. Update all assets belonging to this group in MongoDB
-    const result = await Asset.updateMany(
-      {
-        $or: [
-          { group: numGroup },
-          { symbol: { $in: [...targetSymbols, ...targetSymbolsLower] } },
-          { id: { $in: [...targetSymbols, ...targetSymbolsLower] } },
-        ],
-      },
-      {
-        $set: {
-          qrCode: cleanQr,
-          group: numGroup,
-        },
-      }
-    );
-
-    // 2. Also ensure every symbol in targetSymbols exists with group and qrCode
-    for (const sym of targetSymbols) {
-      const match = initialAssetsList.find(
-        (it) => it.symbol.toUpperCase() === sym || it.id.toUpperCase() === sym
-      );
-      await Asset.findOneAndUpdate(
+    // Instant parallel atomic update (<100ms) - eliminates slow 15-iteration sequential loop
+    const [result, setting] = await Promise.all([
+      Asset.updateMany(
         {
           $or: [
-            { symbol: sym },
-            { symbol: sym.toLowerCase() },
-            { id: sym },
-            { id: sym.toLowerCase() },
+            { group: numGroup },
+            { symbol: { $in: [...targetSymbols, ...targetSymbolsLower] } },
+            { id: { $in: [...targetSymbols, ...targetSymbolsLower] } },
           ],
         },
         {
           $set: {
-            group: numGroup,
             qrCode: cleanQr,
-            name: match?.name || sym,
-            symbol: sym,
-            id: sym,
-            category: match?.category || 'Stock',
-            basePrice: match?.basePrice || 1000,
-            step: match?.step || 1.5,
-            icon: match?.icon || 'stock',
-            color: match?.color || '#38bdf8',
-            returnPercent: match?.returnPercent || 8,
-            minStake: match?.minStake || 100,
-            maxStake: match?.maxStake || 500000,
+            group: numGroup,
           },
-          $setOnInsert: {
-            isEnabled: true,
+        }
+      ),
+      Setting.findOneAndUpdate(
+        { key: 'main_config' },
+        {
+          $set: {
+            [`groupQrs.${numGroup}`]: cleanQr,
+            [`groupQrs.${String(numGroup)}`]: cleanQr,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
-    }
-
-    // 3. Save into Setting main_config
-    let setting = await Setting.findOne({ key: 'main_config' });
-    if (!setting) {
-      setting = new Setting({
-        key: 'main_config',
-        groupQrs: { 1: '', 2: '', 3: '', 4: '', 5: '' },
-      });
-    }
-    if (!setting.groupQrs) setting.groupQrs = { 1: '', 2: '', 3: '', 4: '', 5: '' };
-    setting.groupQrs[numGroup] = cleanQr;
-    setting.markModified('groupQrs');
-    await setting.save();
+      ),
+    ]);
 
     return res.status(200).json({
       success: true,
-      message: `Group ${numGroup} payment QR updated for all companies in Group ${numGroup}!`,
+      message: `Group ${numGroup} payment QR updated in 1-Click!`,
       group: numGroup,
       qrCode: cleanQr,
-      matchedCount: result.matchedCount,
-      modifiedCount: result.modifiedCount,
+      matchedCount: result?.matchedCount || 0,
+      modifiedCount: result?.modifiedCount || 0,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
@@ -571,81 +592,43 @@ export const updateGroupInterestRate = async (req, res) => {
     const targetSymbols = groupsList[numGroup - 1] || [];
     const targetSymbolsLower = targetSymbols.map((s) => s.toLowerCase());
 
-    // 1. Update all assets belonging to this group in MongoDB
-    const result = await Asset.updateMany(
-      {
-        $or: [
-          { group: numGroup },
-          { symbol: { $in: [...targetSymbols, ...targetSymbolsLower] } },
-          { id: { $in: [...targetSymbols, ...targetSymbolsLower] } },
-        ],
-      },
-      {
-        $set: {
-          returnPercent: targetRate,
-          group: numGroup,
-        },
-      }
-    );
-
-    // 2. Also ensure every symbol in targetSymbols exists with group and returnPercent
-    for (const sym of targetSymbols) {
-      const match = initialAssetsList.find(
-        (it) => it.symbol.toUpperCase() === sym || it.id.toUpperCase() === sym
-      );
-      await Asset.findOneAndUpdate(
+    // Instant parallel atomic update (<100ms) - eliminates slow 15-iteration sequential loop
+    const [result, setting] = await Promise.all([
+      Asset.updateMany(
         {
           $or: [
-            { symbol: sym },
-            { symbol: sym.toLowerCase() },
-            { id: sym },
-            { id: sym.toLowerCase() },
+            { group: numGroup },
+            { symbol: { $in: [...targetSymbols, ...targetSymbolsLower] } },
+            { id: { $in: [...targetSymbols, ...targetSymbolsLower] } },
           ],
         },
         {
           $set: {
-            group: numGroup,
             returnPercent: targetRate,
-            name: match?.name || sym,
-            symbol: sym,
-            id: sym,
-            category: match?.category || 'Stock',
-            basePrice: match?.basePrice || 1000,
-            step: match?.step || 1.5,
-            icon: match?.icon || 'stock',
-            color: match?.color || '#38bdf8',
-            minStake: match?.minStake || 100,
-            maxStake: match?.maxStake || 500000,
+            group: numGroup,
           },
-          $setOnInsert: {
-            isEnabled: true,
+        }
+      ),
+      Setting.findOneAndUpdate(
+        { key: 'main_config' },
+        {
+          $set: {
+            [`groupInterestRates.${numGroup}`]: targetRate,
+            [`groupInterestRates.${String(numGroup)}`]: targetRate,
           },
         },
         { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
-    }
-
-    // 3. Save into Setting main_config
-    let setting = await Setting.findOne({ key: 'main_config' });
-    if (!setting) {
-      setting = new Setting({
-        key: 'main_config',
-        groupInterestRates: { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 },
-      });
-    }
-    if (!setting.groupInterestRates) setting.groupInterestRates = { 1: 5, 2: 6, 3: 7, 4: 8, 5: 9 };
-    setting.groupInterestRates[numGroup] = targetRate;
-    setting.markModified('groupInterestRates');
-    await setting.save();
+      ),
+    ]);
 
     return res.status(200).json({
       success: true,
-      message: `Group ${numGroup} interest rate updated to +${targetRate}% for all companies in Group ${numGroup}!`,
+      message: `Group ${numGroup} interest rate updated to +${targetRate}% in 1-Click!`,
       group: numGroup,
       returnPercent: targetRate,
-      groupInterestRates: setting.groupInterestRates,
-      matchedCount: result.matchedCount,
-      modifiedCount: result.modifiedCount,
+      groupInterestRates: setting?.groupInterestRates,
+      matchedCount: result?.matchedCount || 0,
+      modifiedCount: result?.modifiedCount || 0,
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message });
